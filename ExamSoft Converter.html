@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExamSoft → Canvas (Universal Parser)</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #ffffff; --bg2:      #f5f5f4; --bg3:      #eeece9;
+      --text:     #1a1a18; --text2:    #6b6b67;
+      --border:   rgba(0,0,0,0.12); --border2:  rgba(0,0,0,0.22);
+      --radius:   8px; --radius-lg:12px;
+      --info-bg:  #eff6ff; --info-tx: #1d4ed8; --info-bd: rgba(29,78,216,0.3);
+      --ok-bg:    #f0fdf4; --ok-tx:   #15803d; --ok-bd:   rgba(21,128,61,0.3);
+      --warn-bg:  #fffbeb; --warn-tx: #b45309; --warn-bd: rgba(180,83,9,0.3);
+      --err-bg:   #fef2f2; --err-tx:  #b91c1c; --err-bd:  rgba(185,28,28,0.3);
+      --green:    #1D9E75;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:      #121212; --bg2: #1e1e1c; --bg3: #2a2a27;
+        --text:    #f0ede8; --text2: #8a8a86;
+        --border:  rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.2);
+        --info-bg: #0c1a33; --info-tx: #93bbff; --info-bd: rgba(147,187,255,0.25);
+        --ok-bg:   #0a1f12; --ok-tx:  #6ee7a0; --ok-bd:  rgba(110,231,160,0.25);
+        --warn-bg: #1a1200; --warn-tx: #fbbf24; --warn-bd:rgba(251,191,36,0.25);
+        --err-bg:  #1f0a0a; --err-tx:  #fca5a5; --err-bd: rgba(252,165,165,0.25);
+        --green:   #22c55e;
+      }
+    }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg3); color: var(--text); min-height: 100vh; transition: background 0.3s; }
+    .page { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; transition: all 0.3s; }
+    
+    /* --- LTI / IFRAME MODE STYLES --- */
+    body.lti-mode { background: var(--bg); }
+    body.lti-mode .page { max-width: 100%; padding: 16px; margin: 0; }
+    .lti-badge { display: none; background: var(--info-bg); color: var(--info-tx); border: 1px solid var(--info-bd); font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
+    body.lti-mode .lti-badge { display: inline-block; }
+
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .app-title { font-size: 20px; font-weight: 600; display: flex; align-items: center; }
+    .app-sub   { font-size: 12px; color: var(--text2); font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
+
+    .steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .step  { display: flex; align-items: center; gap: 6px; }
+    .step-dot { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; border: 0.5px solid var(--border2); background: var(--bg2); color: var(--text2); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+    .step-dot.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .step-dot.done   { background: var(--green); color: #fff; border-color: var(--green); }
+    .step-lbl { font-size: 13px; color: var(--text2); }
+    .step-lbl.active { color: var(--text); font-weight: 500; }
+    .step-sep { width: 16px; height: 0.5px; background: var(--border); }
+
+    .drop-zone { border: 1.5px dashed var(--border2); border-radius: var(--radius-lg); padding: 40px 24px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--bg); }
+    .drop-zone:hover, .drop-zone.drag { border-color: var(--text); background: var(--bg2); }
+
+    .preview-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; width: 100%; height: 200px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text2); resize: vertical; margin-top: 8px; outline: none; }
+    .preview-box:focus { border-color: var(--text); }
+
+    .btn { border-radius: var(--radius); padding: 10px 22px; font-size: 14px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: opacity 0.15s; }
+    .btn-primary { background: var(--text); color: var(--bg); border: none; font-weight: 500; }
+    .btn-primary:disabled { opacity: 0.3; cursor: default; }
+    .btn-secondary { background: transparent; border: 0.5px solid var(--border2); color: var(--text2); }
+    .btn-outline { background: transparent; border: 1px solid var(--text); color: var(--text); }
+    .btn-outline:hover { background: var(--bg2); }
+    .btn-toggle { background: var(--bg); border: 1px solid var(--border2); color: var(--text); font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: background 0.15s; font-weight: 500; }
+    .btn-toggle:hover { background: var(--bg2); }
+
+    textarea, input[type=text], input[type=number], select {
+      background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius);
+      color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px;
+      padding: 8px 10px; outline: none; width: 100%;
+    }
+    textarea:focus, input:focus, select:focus { border-color: var(--text); }
+
+    .q-card { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 8px; }
+    .q-header { padding: 12px 14px; cursor: pointer; display: flex; align-items: center; gap: 10px; background: var(--bg2); }
+    .q-body { padding: 14px 16px; border-top: 1px solid var(--border); background: var(--bg); }
+
+    .choice-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); margin-bottom: 6px; background: var(--bg); transition: border-color 0.15s; }
+    .choice-row.correct { border-color: var(--green); background: var(--ok-bg); }
+    
+    .choice-row.state-added { border-color: var(--ok-tx); background: var(--ok-bg); border-width: 1.5px; }
+    .choice-row.state-removed { border-color: var(--err-bd); background: var(--err-bg); }
+    .choice-dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--border2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .choice-dot.filled { background: var(--green); border-color: var(--green); }
+    .choice-dot.filled-added { background: var(--ok-tx); border-color: var(--ok-tx); }
+    .choice-dot.filled-removed { background: transparent; border-color: var(--err-tx); }
+    .choice-inner { width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+
+    .stat-card { border-radius: var(--radius); padding: 10px 14px; text-align: center; }
+    .alert-err  { background: var(--err-bg);  border: 1px solid var(--err-bd);  border-radius: var(--radius); padding: 12px; font-size: 13px; color: var(--err-tx); }
+    .alert-warn { background: var(--warn-bg); border: 1px solid var(--warn-bd); border-radius: var(--radius); padding: 12px; font-size: 13px; color: var(--warn-tx); }
+    .lbl { font-size: 11px; color: var(--text2); font-family: 'JetBrains Mono', monospace; margin-bottom: 5px; display: block; font-weight: bold; }
+    .spinner { width: 16px; height: 16px; border: 2px solid var(--border2); border-top-color: var(--text); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+    .toast { background: var(--text); color: var(--bg); padding: 12px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.2); opacity: 0; transform: translateY(10px); transition: opacity 0.3s, transform 0.3s; display: flex; align-items: center; gap: 8px; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* Custom Error Console */
+    #error-console { display: none; position: fixed; top: 10%; left: 10%; width: 80%; max-height: 80%; background: var(--bg); border: 2px solid var(--err-tx); border-radius: var(--radius-lg); box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 10000; overflow: hidden; flex-direction: column; }
+    #error-console-header { background: var(--err-bg); color: var(--err-tx); padding: 12px 16px; font-weight: bold; border-bottom: 1px solid var(--err-bd); display: flex; justify-content: space-between; align-items: center; }
+    #error-console-body { padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text); background: var(--bg2); white-space: pre-wrap; flex: 1; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="app-header">
+    <div>
+      <div class="app-title">ExamSoft → Canvas <span class="lti-badge">LTI MODE</span></div>
+      <div class="app-sub">PDF Files Only • LTI Support & Global Error Catching</div>
+    </div>
+    <div id="steps" class="steps"></div>
+  </div>
+
+  <div id="error-alert-btn" style="display:none; margin-bottom: 20px;">
+      <button class="btn btn-primary" style="background: var(--err-tx); width: 100%;" onclick="document.getElementById('error-console').style.display='flex'">⚠️ System Error Detected - View Logs</button>
+  </div>
+
+  <div id="view-upload"></div>
+  <div id="view-review" style="display:none;"></div>
+  <div id="view-done"   style="display:none;"></div>
+</div>
+
+<div id="error-console">
+    <div id="error-console-header">
+        <span>Application Error Logs</span>
+        <button class="btn-secondary" style="border:none; padding:4px 8px; cursor:pointer;" onclick="document.getElementById('error-console').style.display='none'">Close</button>
+    </div>
+    <div id="error-console-body"></div>
+</div>
+
+<script>
+// ── Global Error Interceptor ──────────────────────────────────────────────────
+window.appLogs = [];
+const errorBody = document.getElementById('error-console-body');
+const errorBtn = document.getElementById('error-alert-btn');
+
+function logError(msg) {
+    const time = new Date().toLocaleTimeString();
+    window.appLogs.push(`[${time}] ${msg}`);
+    errorBody.innerHTML = window.appLogs.join('\n\n');
+    errorBtn.style.display = 'block';
+    console.warn("Caught Error:", msg); // Prevent infinite loop if console.error is wrapped
+}
+
+// Intercept unhandled JS errors
+window.onerror = function(msg, url, lineNo, columnNo, error) {
+    logError(`SCRIPT ERROR: ${msg}\nLine: ${lineNo}:${columnNo}`);
+    return false;
+};
+
+// Intercept promise rejections (like PDF.js failures)
+window.addEventListener('unhandledrejection', function(event) {
+    logError(`ASYNC ERROR (Promise Rejection):\n${event.reason}`);
+});
+
+// Intercept console.error calls
+const originalConsoleError = console.error;
+console.error = function(...args) {
+    logError(`CONSOLE ERROR: ${args.join(' ')}`);
+    originalConsoleError.apply(console, args);
+};
+
+// ── LTI / iFrame Detection ────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+    // If the window is not the top window, it is embedded in an iframe (Canvas LTI)
+    if (window.self !== window.top) {
+        document.body.classList.add('lti-mode');
+        console.log("LTI / iFrame Mode Detected. Adjusting layout.");
+    }
+});
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+function showToast(message) {
+  let container = document.getElementById('toast-container');
+  if (!container) { container = document.createElement('div'); container.id = 'toast-container'; document.body.appendChild(container); }
+  const toast = document.createElement('div'); toast.className = 'toast';
+  toast.innerHTML = `<span style="color:var(--green);">✓</span> ${esc(message)}`;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+function autoFixTypos(text) {
+  if (!text) return "";
+  let clean = text.replace(/ {2,}/g, ' ').replace(/ \./g, '.').replace(/ ,/g, ',').replace(/ \?/g, '?')
+                  .replace(/\bshoud\b/gi, 'should').replace(/\bH20\b/gi, 'H2O')
+                  .replace(/\badminster\b/gi, 'administer').replace(/\brecieving\b/gi, 'receiving')
+                  .replace(/(^\s*|[.!?]\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  return clean.trim();
+}
+
+const metaPatterns = [
+  /Item Categories:/i, /Category Name/i, /Category Path/i, /Bloom Taxonomy/i,
+  /Item Psychometrics:/i, /Difficulty Level/i, /Point Biserial/i, /Upper 27%/i, /Lower 27%/i,
+  /Item ID:/i, /Item Creator:/i, /The following table:/i,
+  /^[A-Z]{3}\s\d{3}/, 
+  /^\d{2}\s?-/,       
+  /^[\d\.\-\s]+$/,    
+  /\\/                
+];
+
+function isMetadataLine(line) {
+  return metaPatterns.some(regex => regex.test(line));
+}
+
+function universalParseText(rawText) {
+  const questions = [], fixes = [];
+  let lines = rawText.split('\n'), currentQ = null, parseState = 'search'; 
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Detect start of new question
+    const qMatch = trimmed.match(/^Question\s*#:\s*(\d+)/i);
+    if (qMatch) {
+      if (currentQ && (currentQ.text || currentQ.choices.length > 0)) finalizeQuestion(currentQ, questions);
+      currentQ = { id: parseInt(qMatch[1], 10), qTitle: "", type: "multiple_choice_question", text: "", choices: [], points: 1, rationale: "", metadata: "" };
+      parseState = 'question';
+      return;
+    }
+
+    if (!currentQ) return;
+
+    // Detect Metadata/Tables
+    if (isMetadataLine(trimmed)) {
+       parseState = 'metadata';
+    } else if (parseState === 'metadata' && !trimmed.match(/^([✔✓\*3])?\s*([a-zA-Z])\s*[\.\)]/) && !/^Rationale:/i.test(trimmed)) {
+       // Snap back to question text if metadata ends
+       parseState = 'question';
+       if (!fixes.includes("Stitched question sentences broken by PDF page-break tables.")) fixes.push("Stitched question sentences broken by PDF page-break tables.");
+    }
+
+    const weightMatch = trimmed.match(/^Item Weight:\s*([\d\.]+)/i);
+    if (weightMatch) { currentQ.points = parseFloat(weightMatch[1]); return; }
+
+    const descMatch = trimmed.match(/^Item Description:\s*(.*)/i);
+    if (descMatch) { currentQ.itemDesc = descMatch[1].trim(); return; }
+
+    const rationaleMatch = trimmed.match(/^Rationale:\s*(.*)/i);
+    if (rationaleMatch) {
+      parseState = 'rationale';
+      currentQ.rationale += rationaleMatch[1];
+      return;
+    }
+
+    // Detect Choices
+    const cMatch = trimmed.match(/^([✔✓\*3])?\s*([a-zA-Z])\s*[\.\)]\s*(.*)/);
+    if (cMatch) {
+      currentQ.choices.push({ id: cMatch[2].toUpperCase(), text: cMatch[3], isCorrect: !!cMatch[1] });
+      parseState = 'choices';
+      if (cMatch[1] === '3' && !fixes.includes("Fixed PDF '3' checkmark artifact.")) fixes.push("Fixed PDF '3' checkmark artifact.");
+      return;
+    }
+
+    // Route Text based on current state
+    if (parseState === 'question') {
+      currentQ.text += (currentQ.text ? " " : "") + trimmed;
+    } else if (parseState === 'choices' && currentQ.choices.length > 0) {
+      currentQ.choices[currentQ.choices.length - 1].text += " " + trimmed;
+    } else if (parseState === 'rationale') {
+      currentQ.rationale += (currentQ.rationale ? " " : "") + trimmed;
+    } else if (parseState === 'metadata') {
+      currentQ.metadata += (currentQ.metadata ? "\n" : "") + trimmed;
+    }
+  });
+
+  if (currentQ && (currentQ.text || currentQ.choices.length > 0)) finalizeQuestion(currentQ, questions);
+
+  function finalizeQuestion(q, arr) {
+      q.text = autoFixTypos(q.text);
+      q.choices.forEach(c => { c.text = autoFixTypos(c.text); c.originalIsCorrect = c.isCorrect; });
+      q.rationale = autoFixTypos(q.rationale);
+      
+      let genTitle = q.text.replace(/<[^>]*>?/gm, '').trim();
+      if (genTitle.length > 50) genTitle = genTitle.substring(0, 50) + "...";
+      q.qTitle = genTitle || q.itemDesc || `Question ${q.id}`;
+
+      if (q.choices.filter(c => c.isCorrect).length > 1) q.type = 'multiple_answers_question';
+      arr.push(q);
+  }
+
+  return { title: "PDF ExamSoft Import", questions, fixes };
+}
+
+// ── App UI & Logic ────────────────────────────────────────────────────────────
+let state = { step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false };
+let expanded = {}; let previewMode = {};
+
+const typeLabels = { multiple_choice_question: 'MC', multiple_answers_question: 'MA', true_false_question: 'T/F', essay_question: 'Essay', short_answer_question: 'Short Ans' };
+function esc(s=''){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function toggleChoice(qi, ci) {
+  const q = state.questions[qi], choice = q.choices[ci];
+  if (q.type === 'multiple_answers_question') {
+    choice.isCorrect = !choice.isCorrect;
+    showToast(choice.isCorrect ? `Added ${choice.id} to correct answers (Q${q.id})` : `Removed ${choice.id} (Q${q.id})`);
+  } else {
+    q.choices.forEach((x, idx) => x.isCorrect = (idx === ci)); 
+    showToast(`Correct answer updated to ${choice.id} (Q${q.id})`);
+  }
+  renderReview();
+}
+
+function renderSteps(){
+  const labels=['Upload','Review','Export'];
+  const ai={upload:0,review:1,done:2}[state.step];
+  document.getElementById('steps').innerHTML=labels.map((l,i)=>{
+    const done=i<ai,active=i===ai,cls=done?'done':active?'active':'';
+    return `<div class="step"><div class="step-dot ${cls}">${done?'✓':i+1}</div><span class="step-lbl ${active?'active':''}">${l}</span></div>${i<2?'<div class="step-sep"></div>':''}`;
+  }).join('');
+}
+
+function renderUpload(){
+  const v=document.getElementById('view-upload');
+  v.innerHTML=`
+    <p style="margin-bottom:12px;">Select a .pdf file for local conversion.</p>
+    <div class="drop-zone" id="dropzone">${state.file ? esc(state.file.name) : 'Drag & Drop PDF File Here'}</div>
+    <input type="file" id="file-input" style="display:none;" accept=".pdf">
+    
+    ${state.extracting ? `<div style="margin-top:20px; color:var(--text2);"><span class="spinner"></span> Extracting document text...</div>` : ''}
+    ${state.error ? `<div class="alert-err" style="margin-top:20px;">${esc(state.error)}</div>` : ''}
+
+    ${state.rawText ? `
+      <div style="margin-top:24px;">
+        <label class="lbl">PREVIEW: Raw Extracted Text</label>
+        <textarea id="raw-preview" class="preview-box" spellcheck="true" oninput="state.rawText=this.value">${esc(state.rawText)}</textarea>
+      </div>
+    ` : ''}
+
+    <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+      <button class="btn btn-primary" id="parse-btn" ${!state.rawText?'disabled':''}>Parse Questions \u2192</button>
+    </div>
+  `;
+  
+  const dz = document.getElementById('dropzone');
+  dz.onclick = () => document.getElementById('file-input').click();
+  dz.ondrop = e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); };
+  dz.ondragover = e => { e.preventDefault(); };
+  
+  document.getElementById('file-input').onchange = e => handleFile(e.target.files[0]);
+  if(document.getElementById('parse-btn')) {
+    document.getElementById('parse-btn').onclick = () => {
+      try {
+        const parsed = universalParseText(state.rawText);
+        state.title = state.file ? state.file.name.replace(/\.[^/.]+$/, "") : parsed.title;
+        state.questions = parsed.questions;
+        state.fixes = parsed.fixes;
+        expanded = {}; previewMode = {};
+        state.questions.forEach((_,i) => expanded[i] = false);
+        state.step = 'review';
+        render();
+      } catch (err) {
+        logError("Parser Failure: " + err.message);
+      }
+    };
+  }
+}
+
+async function handleFile(f) {
+  if (!f) return;
+  state.file = f; state.rawText = null; state.error = null; state.extracting = true; renderUpload();
+
+  try {
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (ext !== 'pdf') throw new Error("Unsupported format. Please upload a .pdf file.");
+    
+    const ab = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: ab}).promise;
+    let fullText = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      let lastY = -1, pageText = "";
+      for (let item of textContent.items) {
+          if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) pageText += "\n";
+          pageText += item.str;
+          lastY = item.transform[5];
+      }
+      fullText += pageText + "\n\n";
+    }
+    state.rawText = fullText;
+  } catch(err) { 
+      state.error = err.message; 
+      logError("File Read Failure: " + err.message);
+  }
+  state.extracting = false; renderUpload();
+}
+
+function renderReview(){
+  const v = document.getElementById('view-review'), qCount = state.questions.length;
+  
+  v.innerHTML=`
+    <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:flex-start;">
+      <div>
+        <h3 style="margin-bottom:4px;">Results & Verification</h3>
+        <p style="font-size:13px; color:var(--text2); margin-top:0;">Toggle "Preview" to see exactly how Canvas will render the question.</p>
+      </div>
+      <div class="stat-card" style="background: ${qCount > 0 ? 'var(--ok-bg)' : 'var(--err-bg)'}; color: ${qCount > 0 ? 'var(--ok-tx)' : 'var(--err-tx)'}; border: 1px solid ${qCount > 0 ? 'var(--ok-bd)' : 'var(--err-bd)'};">
+        <span style="font-size:18px; font-weight:bold;">${qCount}</span>
+        <span style="font-size:12px;"> Questions Found</span>
+      </div>
+    </div>
+
+    ${qCount === 0 ? `<div class="alert-err" style="margin-bottom: 20px;"><strong>⚠️ No questions were detected!</strong></div>` : ''}
+
+    <div style="display:flex; gap: 16px; margin-bottom:16px; flex-wrap:wrap;">
+      <div style="flex:2; min-width: 250px;">
+        <label class="lbl">Global Canvas Quiz Title</label>
+        <input type="text" id="quiz-title" spellcheck="true" value="${esc(state.title)}">
+      </div>
+      <div style="flex:1; min-width: 200px;">
+        <label class="lbl">Canvas Metadata Export Setting</label>
+        <select id="metadata-setting">
+          <option value="visible" selected>Visible HTML Table (Students will see it)</option>
+          <option value="hidden">Hidden HTML Comments (Invisible to students)</option>
+          <option value="strip">Strip Completely from Canvas</option>
+        </select>
+      </div>
+    </div>
+    
+    <div id="q-list">${state.questions.map((q,i)=>renderCard(q,i)).join('')}</div>
+    
+    <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px;">
+      <button class="btn btn-secondary" id="toggle-json" style="font-size: 12px; padding: 6px 12px;">👀 View Raw Parsed JSON</button>
+      <textarea id="json-preview" class="preview-box" style="display:none; height: 150px; margin-top: 8px;" readonly></textarea>
+    </div>
+    
+    <div style="display:flex;justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:20px;">
+      <button class="btn btn-secondary" onclick="location.reload()">\u2190 Start Over</button>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-outline" id="pdf-btn" ${qCount === 0 ? 'disabled' : ''}>Download PDF Key</button>
+        <button class="btn btn-primary" id="export-btn" ${qCount === 0 ? 'disabled' : ''}>Download QTI ZIP</button>
+      </div>
+    </div>
+  `;
+
+  if(qCount > 0) {
+    document.getElementById('export-btn').onclick=downloadZip;
+    document.getElementById('pdf-btn').onclick=downloadPDF;
+  }
+  document.getElementById('quiz-title').oninput=e=>state.title=e.target.value;
+  document.querySelectorAll('[data-toggle]').forEach(el=>{ el.onclick=()=>{ const i=+el.dataset.toggle; expanded[i]=!expanded[i]; renderReview(); }; });
+  document.getElementById('toggle-json').onclick = (e) => {
+    const box = document.getElementById('json-preview');
+    if (box.style.display === 'none') { box.style.display = 'block'; box.value = JSON.stringify(state.questions, null, 2); e.target.innerText = 'Hide JSON'; } 
+    else { box.style.display = 'none'; e.target.innerText = '👀 View Raw Parsed JSON'; }
+  };
+}
+
+function formatMetadataToHTML(text) {
+  if (!text) return '';
+  let str = text.replace(/"\s*\n\s*,\s*"/g, '","').replace(/"\s*\n\s*$/gm, '"').replace(/^"\s*\n\s*/gm, '"');
+  let lines = str.split('\n'), out = '', inTable = false;
+  
+  lines.forEach(line => {
+      let t = line.trim();
+      if (!t || t === '"') return;
+      if (t.includes('","') || (t.startsWith('"') && t.endsWith('"') && t.includes(','))) {
+          if (!inTable) {
+              out += '&lt;table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%; font-size: 11px; font-family: sans-serif; margin-top: 8px; margin-bottom: 16px; border-color: #ddd;"&gt;&lt;tbody&gt;';
+              inTable = true;
+          }
+          let cells = t.split('","').map(c => c.replace(/(^"|"$)/g, '').trim());
+          out += '&lt;tr&gt;';
+          cells.forEach((c) => { out += `&lt;td style="border: 1px solid #ccc; padding: 6px;"&gt;${esc(c)}&lt;/td&gt;`; });
+          out += '&lt;/tr&gt;';
+      } else {
+          if (inTable) { out += '&lt;/tbody&gt;&lt;/table&gt;'; inTable = false; }
+          out += `&lt;strong style="display:block; margin-top:12px; color:#444; font-size:12px;"&gt;${esc(t)}&lt;/strong&gt;`;
+      }
+  });
+  if (inTable) out += '&lt;/tbody&gt;&lt;/table&gt;';
+  return out;
+}
+
+function renderCard(q,i){
+  const exp = expanded[i]; const isPreview = previewMode[i];
+  const typeBadgeColor = q.type === 'multiple_answers_question' ? 'var(--info-bg)' : 'var(--bg2)';
+  const typeBadgeText = q.type === 'multiple_answers_question' ? 'var(--info-tx)' : 'var(--text2)';
+  
+  const metaBadge = q.metadata ? `<span style="background:var(--warn-bg); color:var(--warn-tx); font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace; margin-left:4px;" title="This question has an attached metadata table">📊 TABLE</span>` : '';
+
+  return `<div class="q-card">
+    <div class="q-header" data-toggle="${i}">
+      <span class="mono" style="min-width:30px;">Q${q.id}</span>
+      <span style="background:${typeBadgeColor}; color:${typeBadgeText}; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace;">${typeLabels[q.type] || 'MC'}</span>
+      ${metaBadge}
+      <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:6px;"><strong>${esc(q.qTitle)}</strong></span>
+      <button class="btn-toggle" onclick="event.stopPropagation(); previewMode[${i}] = !previewMode[${i}]; renderReview();">${isPreview ? '✏️ Edit' : '👁️ Preview'}</button>
+      <span style="margin-left:4px;">${exp?'▾':'▸'}</span>
+    </div>
+    ${exp?`<div class="q-body">
+      ${isPreview ? `
+        <div style="padding: 16px; background: var(--bg); border: 1px solid var(--border2); border-radius: var(--radius); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+            <div style="display:flex; justify-content:space-between; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 14px;">
+                <span style="font-weight:bold; font-size:16px; color: var(--text);">${esc(q.qTitle)}</span>
+                <span style="font-size:14px; font-weight:bold; color: var(--text2);">${q.points} pts</span>
+            </div>
+            <div style="font-size: 14px; color: var(--text); margin-bottom: 20px; line-height: 1.6;">${esc(q.text).replace(/\n/g, '<br>')}</div>
+            <div style="margin-bottom: 24px;">
+                ${q.choices.map(c => `
+                    <div style="display:flex; align-items:flex-start; gap: 10px; padding: 8px 12px; margin-bottom: 8px; background: ${c.isCorrect ? 'var(--ok-bg)' : 'var(--bg2)'}; border: 1px solid ${c.isCorrect ? 'var(--ok-bd)' : 'transparent'}; border-radius: 6px;">
+                        <input type="${q.type === 'multiple_answers_question' ? 'checkbox' : 'radio'}" disabled ${c.isCorrect ? 'checked' : ''} style="margin-top: 3px;">
+                        <span style="font-size: 14px; color: ${c.isCorrect ? 'var(--ok-tx)' : 'var(--text)'}; font-weight: ${c.isCorrect ? '600' : '400'};">${c.id}. ${esc(c.text)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            ${q.rationale ? `<div style="background: var(--info-bg); border-left: 4px solid var(--info-tx); padding: 12px; font-size: 13px; color: var(--text); margin-bottom: 16px;"><strong style="color: var(--info-tx); display:block; margin-bottom: 6px;">Canvas Rationale / Feedback:</strong>${esc(q.rationale).replace(/\n/g, '<br>')}</div>` : ''}
+            ${q.metadata && document.getElementById('metadata-setting').value === 'visible' ? `
+                <div style="background: #fafafa; padding: 12px; border-radius: 6px; font-size: 11px; color: var(--text2); overflow-x: auto; border: 1px solid #ccc;">
+                    <strong style="display:block; margin-bottom: 6px; font-family: 'DM Sans', sans-serif;">Exam Metadata:</strong>
+                    ${formatMetadataToHTML(q.metadata).replace(/&lt;/g, '<').replace(/&gt;/g, '>')}
+                </div>
+            ` : ''}
+        </div>
+      ` : `
+        <div style="display:flex; gap: 12px; margin-bottom: 12px;">
+          <div style="flex:1;">
+            <label class="lbl">Individual Question Title</label>
+            <input type="text" spellcheck="true" value="${esc(q.qTitle)}" oninput="state.questions[${i}].qTitle=this.value;">
+          </div>
+          <div style="flex:1;">
+            <label class="lbl">Canvas Question Type</label>
+            <select onchange="state.questions[${i}].type=this.value; showToast('Changed Q'+${q.id}+' Type'); renderReview();">
+              <option value="multiple_choice_question" ${q.type==='multiple_choice_question'?'selected':''}>Multiple Choice</option>
+              <option value="multiple_answers_question" ${q.type==='multiple_answers_question'?'selected':''}>Multiple Answers (MA)</option>
+              <option value="true_false_question" ${q.type==='true_false_question'?'selected':''}>True/False</option>
+              <option value="essay_question" ${q.type==='essay_question'?'selected':''}>Essay</option>
+              <option value="short_answer_question" ${q.type==='short_answer_question'?'selected':''}>Short Answer</option>
+            </select>
+          </div>
+          <div style="width: 80px;">
+            <label class="lbl">Points</label>
+            <input type="number" step="0.5" value="${q.points}" onchange="state.questions[${i}].points=Number(this.value); showToast('Changed Q'+${q.id}+' Points');">
+          </div>
+        </div>
+
+        <label class="lbl">Question Text</label>
+        <textarea rows="3" spellcheck="true" oninput="state.questions[${i}].text=this.value">${esc(q.text)}</textarea>
+        
+        ${['multiple_choice_question', 'multiple_answers_question', 'true_false_question'].includes(q.type) ? `
+        <div style="margin-top:16px;">
+          <label class="lbl">Choices (Click to mark correct)</label>
+          ${q.choices.map((c,ci) => {
+              const isAdded = c.isCorrect && !c.originalIsCorrect, isRemoved = !c.isCorrect && c.originalIsCorrect, isUnchanged = c.isCorrect && c.originalIsCorrect;
+              let rowCls = '', dotCls = '', innerDot = '', statusLbl = '', textStyle = '';
+              if (isAdded) { rowCls = 'state-added'; dotCls = 'filled-added'; innerDot = '<div class="choice-inner"></div>'; statusLbl = '<span class="mono" style="font-size:10px;color:var(--ok-tx);font-weight:bold;">\u2713 NEW SELECTION</span>'; } 
+              else if (isRemoved) { rowCls = 'state-removed'; dotCls = 'filled-removed'; innerDot = '<div class="choice-inner" style="background:var(--err-tx)"></div>'; statusLbl = '<span class="mono" style="font-size:10px;color:var(--err-tx);font-weight:bold;">\u2717 PREVIOUS</span>'; textStyle = 'text-decoration:line-through; opacity:0.7;'; } 
+              else if (isUnchanged) { rowCls = 'correct'; dotCls = 'filled'; innerDot = '<div class="choice-inner"></div>'; } 
+              else { if (c.isCorrect) innerDot = '<div class="choice-inner"></div>'; }
+
+              return `
+              <div class="choice-row ${rowCls}" onclick="toggleChoice(${i}, ${ci})">
+                <div class="choice-dot ${dotCls}">${innerDot}</div>
+                <div style="flex:1; display:flex; align-items:center;">
+                  <span style="font-weight:bold; margin-right:6px; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}">${c.id}.</span>
+                  <input type="text" style="border:none; background:transparent; outline:none; font-family:inherit; font-size:inherit; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}; width:90%; ${textStyle}" spellcheck="true" value="${esc(c.text)}" oninput="state.questions[${i}].choices[${ci}].text=this.value;" onclick="event.stopPropagation();">
+                </div>
+                ${statusLbl}
+              </div>`;
+          }).join('')}
+        </div>` : ''}
+
+        ${q.rationale ? `<div style="margin-top:16px;"><label class="lbl">Rationale (Will export as Canvas Feedback)</label><textarea rows="2" spellcheck="true" oninput="state.questions[${i}].rationale=this.value">${esc(q.rationale)}</textarea></div>` : ''}
+        ${q.metadata ? `<div style="margin-top:16px;"><label class="lbl">Extracted ExamSoft Metadata</label><textarea rows="3" style="font-size:11px; font-family:'JetBrains Mono', monospace;" oninput="state.questions[${i}].metadata=this.value">${esc(q.metadata)}</textarea></div>` : ''}
+      `}
+    </div>`:''}
+  </div>`;
+}
+
+function downloadPDF() {
+  try {
+      if (!window.jspdf) { throw new Error("jsPDF library not loaded."); }
+      const { jsPDF } = window.jspdf; const doc = new jsPDF();
+      let y = 20; const margin = 15; const maxWidth = 180; const pageHeight = 280;
+
+      doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.text(state.title || "Exam Review Key", margin, y); y += 10; doc.setFontSize(11);
+
+      state.questions.forEach((q) => {
+        if (y > pageHeight - 20) { doc.addPage(); y = 20; }
+        doc.setFont("helvetica", "bold"); doc.text(`Q${q.id}: ${q.qTitle} (${q.points || 1} pts) - ${typeLabels[q.type] || 'MC'}`, margin, y); y += 6;
+        doc.setFont("helvetica", "normal");
+        const qTextLines = doc.splitTextToSize(q.text || "", maxWidth); doc.text(qTextLines, margin, y); y += (qTextLines.length * 5) + 4;
+
+        (q.choices || []).forEach(c => {
+          if (y > pageHeight - 10) { doc.addPage(); y = 20; }
+          if (c.isCorrect) { doc.setFont("helvetica", "bold"); doc.setTextColor(21, 128, 61); } 
+          else { doc.setFont("helvetica", "normal"); doc.setTextColor(0, 0, 0); }
+          const cTextLines = doc.splitTextToSize(`${c.id}. ${c.text} ${c.isCorrect ? " [CORRECT]" : ""}`, maxWidth - 10);
+          doc.text(cTextLines, margin + 10, y); y += (cTextLines.length * 5) + 2;
+        });
+        
+        if (q.rationale) {
+            doc.setFont("helvetica", "italic"); doc.setTextColor(80, 80, 80);
+            const rLines = doc.splitTextToSize(`Rationale: ${q.rationale}`, maxWidth);
+            doc.text(rLines, margin, y); y += (rLines.length * 5) + 2;
+        }
+        doc.setTextColor(0, 0, 0); y += 6; 
+      });
+      doc.save((state.title || 'Exam').replace(/\W+/g, '_') + '_Review.pdf');
+  } catch (err) {
+      logError("PDF Generation Failed: " + err.message);
+  }
+}
+
+function buildQTI(){
+  const id='assess_'+Date.now();
+  const metaStyle = document.getElementById('metadata-setting').value;
+
+  const items=state.questions.map((q,i)=>{
+    const rid='r'+i, pts=q.points||1, ch=q.choices||[], qtiType = q.type || 'multiple_choice_question';
+    const safeTitle = esc(q.qTitle || `Question ${q.id}`);
+    const labels=ch.map((c,ci)=>`<response_label ident="c${i}_${ci}"><material><mattext texttype="text/html">&lt;p&gt;${esc(c.text)}&lt;/p&gt;</mattext></material></response_label>`).join('');
+    
+    let feedbackXML = q.rationale ? `<itemfeedback ident="general_fb"><material><mattext texttype="text/html">&lt;p&gt;${esc(q.rationale)}&lt;/p&gt;</mattext></material></itemfeedback>` : '';
+
+    let questionTextWithMeta = esc(q.text).replace(/\n/g, '&lt;br&gt;');
+    if (q.metadata && metaStyle !== 'strip') {
+        const tableHTML = formatMetadataToHTML(q.metadata);
+        if (metaStyle === 'hidden') {
+            questionTextWithMeta += `\n&lt;!-- EXAMSOFT METADATA: \n${esc(q.metadata)}\n--&gt;`;
+        } else if (metaStyle === 'visible') {
+            questionTextWithMeta += `&lt;br&gt;&lt;br&gt;&lt;strong&gt;Exam Metadata:&lt;/strong&gt;&lt;div style="background:#fafafa; padding:12px; border-radius:6px; margin-top:8px;"&gt;${tableHTML}&lt;/div&gt;`;
+        }
+    }
+
+    if (qtiType === 'essay_question' || qtiType === 'short_answer_question') {
+      return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_str ident="${rid}" rcardinality="Single"><render_fib><response_label ident="ans" rshuffle="No"/></render_fib></response_str></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>${feedbackXML}</item>`;
+    }
+
+    const correctIndices = []; ch.forEach((c, ci) => { if (c.isCorrect) correctIndices.push(ci); });
+    if(correctIndices.length === 0 && ch.length > 0) correctIndices.push(0);
+
+    let respCondition = "", rcardinality = "Single";
+    if (qtiType === 'multiple_answers_question') {
+        rcardinality = "Multiple";
+        const conds = correctIndices.map(ci => `<varequal respident="${rid}">c${i}_${ci}</varequal>`).join('');
+        respCondition = `<respcondition continue="No"><conditionvar><and>${conds}</and></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
+    } else {
+        const corrId = `c${i}_${correctIndices[0]}`;
+        respCondition = `<respcondition continue="No"><conditionvar><varequal respident="${rid}">${corrId}</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
+    }
+
+    return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_lid ident="${rid}" rcardinality="${rcardinality}"><render_choice>${labels}</render_choice></response_lid></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>${respCondition}</resprocessing>${feedbackXML}</item>`;
+  }).join('');
+  
+  const a=`<?xml version="1.0" encoding="UTF-8"?><questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/xsd/ims_qtiasiv1p2.xsd"><assessment ident="${id}" title="${esc(state.title)}"><qtimetadata><qtimetadatafield><fieldlabel>cc_profile</fieldlabel><fieldentry>cc.exam.v0p1</fieldentry></qtimetadatafield></qtimetadata><section ident="root_section">${items}</section></assessment></questestinterop>`;
+  const m=`<?xml version="1.0" encoding="UTF-8"?><manifest identifier="man_${Date.now()}" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"><metadata><schema>IMS Content</schema><schemaversion>1.1.3</schemaversion></metadata><organizations/><resources><resource identifier="res1" type="imsqti_xmlv1p2" href="${id}.xml"><file href="${id}.xml"/></resource></resources></manifest>`;
+  return {id,assessment:a,manifest:m};
+}
+
+async function downloadZip(){
+  try {
+      const {id,assessment,manifest}=buildQTI();
+      const zip=new window.JSZip();
+      zip.file('imsmanifest.xml',manifest); zip.file(id+'.xml',assessment);
+      const blob=await zip.generateAsync({type:'blob'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url; a.download=state.title+'.zip'; a.click();
+      state.step='done'; render();
+  } catch (err) {
+      logError("ZIP Generation Failed: " + err.message);
+  }
+}
+
+function renderDone(){
+  document.getElementById('view-done').innerHTML=`
+    <div style="text-align:center;padding:40px;">
+      <h2>Export Complete!</h2>
+      <p style="margin-bottom: 20px; color: var(--text2);">Your QTI ZIP is ready for Canvas.</p>
+      <div style="display:flex; justify-content:center; gap:10px;">
+        <button class="btn btn-outline" onclick="downloadPDF()">Download PDF Review Key</button>
+        <button class="btn btn-primary" onclick="location.reload()">Convert Another Exam</button>
+      </div>
+    </div>
+  `;
+}
+
+function render(){
+  renderSteps();
+  document.getElementById('view-upload').style.display=state.step==='upload'?'':'none';
+  document.getElementById('view-review').style.display=state.step==='review'?'':'none';
+  document.getElementById('view-done').style.display=state.step==='done'?'':'none';
+  if(state.step==='upload') renderUpload();
+  if(state.step==='review') renderReview();
+  if(state.step==='done') renderDone();
+}
+render();
+</script>
+</body>
+</html>
