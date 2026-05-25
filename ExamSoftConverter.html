@@ -138,12 +138,17 @@
 </div>
 
 <script>
+// ── Global Memory (Canvas iFrame Safe) ─────────────────────────────────────────
+window.state = { step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false };
+window.expanded = {}; 
+window.previewMode = {};
+
 // ── Global Error Interceptor ──────────────────────────────────────────────────
 window.appLogs = [];
 const errorBody = document.getElementById('error-console-body');
 const errorBtn = document.getElementById('error-alert-btn');
 
-function logError(msg) {
+window.logError = function(msg) {
     const time = new Date().toLocaleTimeString();
     window.appLogs.push(`[${time}] ${msg}`);
     if (errorBody) errorBody.innerHTML = window.appLogs.join('\n\n');
@@ -152,51 +157,19 @@ function logError(msg) {
 }
 
 window.onerror = function(msg, url, lineNo, columnNo, error) {
-    logError(`SCRIPT ERROR: ${msg}\nLine: ${lineNo}:${columnNo}`);
+    window.logError(`SCRIPT ERROR: ${msg}\nLine: ${lineNo}:${columnNo}`);
     return false;
 };
 
 window.addEventListener('unhandledrejection', function(event) {
-    logError(`ASYNC ERROR (Promise Rejection):\n${event.reason}`);
+    window.logError(`ASYNC ERROR (Promise Rejection):\n${event.reason}`);
 });
 
 const originalConsoleError = console.error;
 console.error = function(...args) {
-    logError(`CONSOLE ERROR: ${args.join(' ')}`);
+    window.logError(`CONSOLE ERROR: ${args.join(' ')}`);
     originalConsoleError.apply(console, args);
 };
-
-// ── LTI Configuration URL Router ──────────────────────────────────────────────
-// If Canvas queries the file url with configuration parameters, serve valid XML block
-function serveLtiXmlConfig() {
-    const currentUrl = window.location.href.split('?')[0];
-    const xmlConfig = `<?xml version="1.0" encoding="UTF-8"?>
-<cartridge_basiclti_link xmlns="http://www.imsglobal.org/xsd/imslticc_v1p0" xmlns:blti="http://www.imsglobal.org/xsd/imsblti_v1p0" xmlns:lticm="http://www.imsglobal.org/xsd/imslticm_v1p1" xmlns:lticp="http://www.imsglobal.org/xsd/imslticp_v1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imslticc_v1p0 http://www.imsglobal.org/xsd/imslticc_v1p0.xsd">
-  <blti:title>ExamSoft Converter</blti:title>
-  <blti:description>Converts ExamSoft exports into Canvas QTI packages.</blti:description>
-  <blti:launch_url>${currentUrl}</blti:launch_url>
-  <blti:extensions platform="canvas.instructure.com">
-    <lticm:property name="privacy_level">anonymous</lticm:property>
-    <lticm:options name="course_navigation">
-      <lticm:property name="url">${currentUrl}</lticm:property>
-      <lticm:property name="text">ExamSoft Converter</lticm:property>
-      <lticm:property name="visibility">admins</lticm:property>
-      <lticm:property name="default">enabled</lticm:property>
-    </lticm:options>
-  </blti:extensions>
-</cartridge_basiclti_link>`;
-
-    // Clear document completely and replace with raw XML data strings
-    document.open("text/xml");
-    document.write(xmlConfig);
-    document.close();
-}
-
-// Check if Canvas is hitting the URL looking for LTI app specs
-const urlParams = new URLSearchParams(window.location.search);
-if (urlParams.has('config') || window.location.hash === '#init-lti') {
-    serveLtiXmlConfig();
-}
 
 // ── LTI / iFrame Detection ────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -208,19 +181,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-function showToast(message) {
+window.showToast = function(message) {
   let container = document.getElementById('toast-container');
   if (!container) { container = document.createElement('div'); container.id = 'toast-container'; document.body.appendChild(container); }
   const toast = document.createElement('div'); toast.className = 'toast';
-  toast.innerHTML = `<span style="color:var(--green);">✓</span> ${esc(message)}`;
+  toast.innerHTML = `<span style="color:var(--green);">✓</span> ${window.esc(message)}`;
   container.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('show'));
   setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
 }
 
-function esc(s=''){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+window.esc = function(s=''){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+window.qtiXmlEscape = function(s='') {
+  return String(s).replace(/&/g, '&amp;amp;').replace(/</g, '&amp;lt;').replace(/>/g, '&amp;gt;').replace(/"/g, '&amp;quot;');
+}
 
-function autoFixTypos(text) {
+window.autoFixTypos = function(text) {
   if (!text) return "";
   let clean = text.replace(/ {2,}/g, ' ').replace(/ \./g, '.').replace(/ ,/g, ',').replace(/ \?/g, '?')
                   .replace(/\bshoud\b/gi, 'should').replace(/\bH20\b/gi, 'H2O')
@@ -239,11 +215,11 @@ const metaPatterns = [
   /\\/                
 ];
 
-function isMetadataLine(line) {
+window.isMetadataLine = function(line) {
   return metaPatterns.some(regex => regex.test(line));
 }
 
-function universalParseText(rawText) {
+window.universalParseText = function(rawText) {
   const questions = [];
   let lines = rawText.split('\n'), currentQ = null, parseState = 'search'; 
 
@@ -261,7 +237,7 @@ function universalParseText(rawText) {
 
     if (!currentQ) return;
 
-    if (isMetadataLine(trimmed)) {
+    if (window.isMetadataLine(trimmed)) {
        parseState = 'metadata';
     } else if (parseState === 'metadata' && !trimmed.match(/^([✔✓\*3])?\s*([a-zA-Z])\s*[\.\)]/) && !/^Rationale:/i.test(trimmed)) {
        parseState = 'question';
@@ -301,9 +277,9 @@ function universalParseText(rawText) {
   if (currentQ && (currentQ.text || currentQ.choices.length > 0)) finalizeQuestion(currentQ, questions);
 
   function finalizeQuestion(q, arr) {
-      q.text = autoFixTypos(q.text);
-      q.choices.forEach(c => { c.text = autoFixTypos(c.text); c.originalIsCorrect = c.isCorrect; });
-      q.rationale = autoFixTypos(q.rationale);
+      q.text = window.autoFixTypos(q.text);
+      q.choices.forEach(c => { c.text = window.autoFixTypos(c.text); c.originalIsCorrect = c.isCorrect; });
+      q.rationale = window.autoFixTypos(q.rationale);
       
       let genTitle = q.text.replace(/<[^>]*>?/gm, '').trim();
       if (genTitle.length > 50) genTitle = genTitle.substring(0, 50) + "...";
@@ -316,7 +292,7 @@ function universalParseText(rawText) {
   return { title: "PDF ExamSoft Import", questions, fixes: ["Analyzed and parsed custom metadata layout."] };
 }
 
-function buildCompliantHTMLTable(text) {
+window.buildCompliantHTMLTable = function(text) {
   if (!text) return '';
   let str = text.replace(/"\s*\n\s*,\s*"/g, '","').replace(/"\s*\n\s*$/gm, '"').replace(/^"\s*\n\s*/gm, '"');
   let lines = str.split('\n'), out = '', inTable = false;
@@ -326,399 +302,8 @@ function buildCompliantHTMLTable(text) {
       if (!t || t === '"') return;
       if (t.includes('","') || (t.startsWith('"') && t.endsWith('"') && t.includes(','))) {
           if (!inTable) {
-              out += '&lt;table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%; font-size: 11px;"&gt;&lt;tbody&gt;';
+              out += '&lt;table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%; font-size: 11px; margin-top: 8px; margin-bottom: 16px;"&gt;&lt;tbody&gt;';
               inTable = true;
           }
           let cells = t.split('","').map(c => c.replace(/(^"|"$)/g, '').trim());
           out += '&lt;tr&gt;';
-          cells.forEach((c) => { out += `&lt;td style="border: 1px solid #ccc; padding: 6px;"&gt;${esc(c)}&lt;/td&gt;`; });
-          out += '&lt;/tr&gt;';
-      } else {
-          if (inTable) { out += '&lt;/tbody&gt;&lt;/table&gt;'; inTable = false; }
-          out += `&lt;p&gt;&lt;strong&gt;${esc(t)}&lt;/strong&gt;&lt;/p&gt;`;
-      }
-  });
-  if (inTable) out += '&lt;/tbody&gt;&lt;/table&gt;';
-  return out;
-}
-
-// ── App UI & Logic ────────────────────────────────────────────────────────────
-let state = { step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false };
-let expanded = {}; let previewMode = {};
-
-const typeLabels = { multiple_choice_question: 'MC', multiple_answers_question: 'MA', true_false_question: 'T/F', essay_question: 'Essay', short_answer_question: 'Short Ans' };
-
-function renderSteps(){
-  const labels=['Upload','Review','Export'];
-  const ai={upload:0,review:1,done:2}[state.step];
-  document.getElementById('steps').innerHTML=labels.map((l,i)=>{
-    const done=i<ai,active=i===ai,cls=done?'done':active?'active':'';
-    return `<div class="step"><div class="step-dot ${cls}">${done?'✓':i+1}</div><span class="step-lbl ${active?'active':''}">${l}</span></div>${i<2?'<div class="step-sep"></div>':''}`;
-  }).join('');
-}
-
-function renderUpload(){
-  const v=document.getElementById('view-upload');
-  v.innerHTML=`
-    <p style="margin-bottom:12px;">Select a .pdf file for local conversion.</p>
-    <div class="drop-zone" id="dropzone">${state.file ? esc(state.file.name) : 'Drag & Drop PDF File Here'}</div>
-    <input type="file" id="file-input" style="display:none;" accept=".pdf">
-    
-    ${state.extracting ? `<div style="margin-top:20px; color:var(--text2);"><span class="spinner"></span> Extracting document text...</div>` : ''}
-    ${state.error ? `<div class="alert-err" style="margin-top:20px;">${esc(state.error)}</div>` : ''}
-
-    ${state.rawText ? `
-      <div style="margin-top:24px;">
-        <label class="lbl">PREVIEW: Raw Extracted Text</label>
-        <textarea id="raw-preview" class="preview-box" spellcheck="true" oninput="state.rawText=this.value">${esc(state.rawText)}</textarea>
-      </div>
-    ` : ''}
-
-    <div style="display:flex;justify-content:flex-end;margin-top:20px;">
-      <button class="btn btn-primary" id="parse-btn" ${!state.rawText?'disabled':''}>Parse Questions \u2192</button>
-    </div>
-  `;
-  
-  const dz = document.getElementById('dropzone');
-  if (dz) {
-    dz.onclick = () => document.getElementById('file-input').click();
-    dz.ondrop = e => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); };
-    dz.ondragover = e => { e.preventDefault(); };
-  }
-  
-  const fi = document.getElementById('file-input');
-  if (fi) fi.onchange = e => handleFile(e.target.files[0]);
-  
-  const pb = document.getElementById('parse-btn');
-  if(pb) {
-    pb.onclick = () => {
-      try {
-        const parsed = universalParseText(state.rawText);
-        state.title = state.file ? state.file.name.replace(/\.[^/.]+$/, "") : parsed.title;
-        state.questions = parsed.questions;
-        state.fixes = parsed.fixes;
-        expanded = {}; previewMode = {};
-        state.questions.forEach((_,i) => expanded[i] = false);
-        state.step = 'review';
-        render();
-      } catch (err) {
-        logError("Parser Failure: " + err.message);
-      }
-    };
-  }
-}
-
-async function handleFile(f) {
-  if (!f) return;
-  state.file = f; state.rawText = null; state.error = null; state.extracting = true; renderUpload();
-
-  try {
-    const extName = f.name.split('.').pop().toLowerCase();
-    if (extName !== 'pdf') throw new Error("Unsupported format. Please upload a .pdf file.");
-    
-    const ab = await f.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({data: ab}).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      let lastY = -1, pageText = "";
-      for (let item of textContent.items) {
-          if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) pageText += "\n";
-          pageText += item.str;
-          lastY = item.transform[5];
-      }
-      fullText += pageText + "\n\n";
-    }
-    state.rawText = fullText;
-  } catch(err) { 
-      state.error = err.message; 
-      logError("File Read Failure: " + err.message);
-  }
-  state.extracting = false; renderUpload();
-}
-
-function renderReview(){
-  const v = document.getElementById('view-review'), qCount = state.questions.length;
-  
-  v.innerHTML=`
-    <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:flex-start;">
-      <div>
-        <h3 style="margin-bottom:4px;">Results & Verification</h3>
-        <p style="font-size:13px; color:var(--text2); margin-top:0;">Toggle "Preview" to see exactly how Canvas will render the question.</p>
-      </div>
-      <div class="stat-card" style="background: ${qCount > 0 ? 'var(--ok-bg)' : 'var(--err-bg)'}; color: ${qCount > 0 ? 'var(--ok-tx)' : 'var(--err-tx)'}; border: 1px solid ${qCount > 0 ? 'var(--ok-bd)' : 'var(--err-bd)'};">
-        <span style="font-size:18px; font-weight:bold;">${qCount}</span>
-        <span style="font-size:12px;"> Questions Found</span>
-      </div>
-    </div>
-
-    ${qCount === 0 ? `<div class="alert-err" style="margin-bottom: 20px;"><strong>⚠️ No questions were detected!</strong></div>` : ''}
-
-    <div style="display:flex; gap: 16px; margin-bottom:16px; flex-wrap:wrap;">
-      <div style="flex:2; min-width: 250px;">
-        <label class="lbl">Global Canvas Quiz Title</label>
-        <input type="text" id="quiz-title" spellcheck="true" value="${esc(state.title)}">
-      </div>
-      <div style="flex:1; min-width: 200px;">
-        <label class="lbl">Canvas Metadata Export Setting</label>
-        <select id="metadata-setting">
-          <option value="visible" selected>Visible HTML Table (Students will see it)</option>
-          <option value="hidden">Hidden HTML Comments (Invisible to students)</option>
-          <option value="strip">Strip Completely from Canvas</option>
-        </select>
-      </div>
-    </div>
-    
-    <div id="q-list">${state.questions.map((q,i)=>renderCard(q,i)).join('')}</div>
-    
-    <div style="margin-top: 24px; border-top: 1px solid var(--border); padding-top: 16px;">
-      <button class="btn btn-secondary" id="toggle-json" style="font-size: 12px; padding: 6px 12px;">👀 View Raw Parsed JSON</button>
-      <textarea id="json-preview" class="preview-box" style="display:none; height: 150px; margin-top: 8px;" readonly></textarea>
-    </div>
-    
-    <div style="display:flex;justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:20px;">
-      <button class="btn btn-secondary" onclick="location.reload()">\u2190 Start Over</button>
-      <div style="display:flex; gap:10px;">
-        <button class="btn btn-outline" id="pdf-btn" ${qCount === 0 ? 'disabled' : ''}>Download PDF Key</button>
-        <button class="btn btn-primary" id="export-btn" ${qCount === 0 ? 'disabled' : ''}>Download QTI ZIP</button>
-      </div>
-    </div>
-  `;
-
-  if(qCount > 0) {
-    const eb = document.getElementById('export-btn'); if (eb) eb.onclick=downloadZip;
-    const pb = document.getElementById('pdf-btn'); if (pb) pb.onclick=downloadPDF;
-  }
-  const qt = document.getElementById('quiz-title'); if (qt) qt.oninput=e=>state.title=e.target.value;
-  document.querySelectorAll('[data-toggle]').forEach(el=>{ el.onclick=()=>{ const i=+el.dataset.toggle; expanded[i]=!expanded[i]; renderReview(); }; });
-  
-  const tj = document.getElementById('toggle-json');
-  if (tj) {
-    tj.onclick = (e) => {
-      const box = document.getElementById('json-preview');
-      if (box && box.style.display === 'none') { box.style.display = 'block'; box.value = JSON.stringify(state.questions, null, 2); e.target.innerText = 'Hide JSON'; } 
-      else if (box) { box.style.display = 'none'; e.target.innerText = '👀 View Raw Parsed JSON'; }
-    };
-  }
-}
-
-function renderCard(q,i){
-  const exp = expanded[i]; const isPreview = previewMode[i];
-  const typeBadgeColor = q.type === 'multiple_answers_question' ? 'var(--info-bg)' : 'var(--bg2)';
-  const typeBadgeText = q.type === 'multiple_answers_question' ? 'var(--info-tx)' : 'var(--text2)';
-  
-  const metaBadge = q.metadata ? `<span style="background:var(--warn-bg); color:var(--warn-tx); font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace; margin-left:4px;" title="This question has an attached metadata table">📊 TABLE</span>` : '';
-
-  return `<div class="q-card">
-    <div class="q-header" data-toggle="${i}">
-      <span class="mono" style="min-width:30px;">Q${q.id}</span>
-      <span style="background:${typeBadgeColor}; color:${typeBadgeText}; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace;">${typeLabels[q.type] || 'MC'}</span>
-      ${metaBadge}
-      <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:6px;"><strong>${esc(q.qTitle)}</strong></span>
-      <button class="btn-toggle" onclick="event.stopPropagation(); previewMode[${i}] = !previewMode[${i}]; renderReview();">${isPreview ? '✏️ Edit' : '👁️ Preview'}</button>
-      <span style="margin-left:4px;">${exp?'▾':'▸'}</span>
-    </div>
-    ${exp?`<div class="q-body">
-      ${isPreview ? `
-        <div style="padding: 16px; background: var(--bg); border: 1px solid var(--border2); border-radius: var(--radius); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-            <div style="display:flex; justify-content:space-between; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 14px;">
-                <span style="font-weight:bold; font-size:16px; color: var(--text);">${esc(q.qTitle)}</span>
-                <span style="font-size:14px; font-weight:bold; color: var(--text2);">${q.points} pts</span>
-            </div>
-            <div style="font-size: 14px; color: var(--text); margin-bottom: 20px; line-height: 1.6;">${esc(q.text).replace(/\n/g, '<br>')}</div>
-            <div style="margin-bottom: 24px;">
-                ${q.choices.map(c => `
-                    <div style="display:flex; align-items:flex-start; gap: 10px; padding: 8px 12px; margin-bottom: 8px; background: ${c.isCorrect ? 'var(--ok-bg)' : 'var(--bg2)'}; border: 1px solid ${c.isCorrect ? 'var(--ok-bd)' : 'transparent'}; border-radius: 6px;">
-                        <input type="${q.type === 'multiple_answers_question' ? 'checkbox' : 'radio'}" disabled ${c.isCorrect ? 'checked' : ''} style="margin-top: 3px;">
-                        <span style="font-size: 14px; color: ${c.isCorrect ? 'var(--ok-tx)' : 'var(--text)'}; font-weight: ${c.isCorrect ? '600' : '400'};">${c.id}. ${esc(c.text)}</span>
-                    </div>
-                `).join('')}
-            </div>
-            ${q.rationale ? `<div style="background: var(--info-bg); border-left: 4px solid var(--info-tx); padding: 12px; font-size: 13px; color: var(--text); margin-bottom: 16px;"><strong style="color: var(--info-tx); display:block; margin-bottom: 6px;">Canvas Rationale / Feedback:</strong>${esc(q.rationale).replace(/\n/g, '<br>')}</div>` : ''}
-            ${q.metadata && document.getElementById('metadata-setting').value === 'visible' ? `
-                <div style="background: #fafafa; padding: 12px; border-radius: 6px; font-size: 11px; color: var(--text2); overflow-x: auto; border: 1px solid #ccc;">
-                    <strong style="display:block; margin-bottom: 6px; font-family: 'DM Sans', sans-serif;">Exam Metadata:</strong>
-                    ${buildCompliantHTMLTable(q.metadata).replace(/&lt;/g, '<').replace(/&gt;/g, '>')}
-                </div>
-            ` : ''}
-        </div>
-      ` : `
-        <div style="display:flex; gap: 12px; margin-bottom: 12px;">
-          <div style="flex:1;">
-            <label class="lbl">Individual Question Title</label>
-            <input type="text" spellcheck="true" value="${esc(q.qTitle)}" oninput="state.questions[${i}].qTitle=this.value;">
-          </div>
-          <div style="flex:1;">
-            <label class="lbl">Canvas Question Type</label>
-            <select onchange="state.questions[${i}].type=this.value; showToast('Changed Q'+${q.id}+' Type'); renderReview();">
-              <option value="multiple_choice_question" ${q.type==='multiple_choice_question'?'selected':''}>Multiple Choice</option>
-              <option value="multiple_answers_question" ${q.type==='multiple_answers_question'?'selected':''}>Multiple Answers (MA)</option>
-              <option value="true_false_question" ${q.type==='true_false_question'?'selected':''}>True/False</option>
-              <option value="essay_question" ${q.type==='essay_question'?'selected':''}>Essay</option>
-              <option value="short_answer_question" ${q.type==='short_answer_question'?'selected':''}>Short Answer</option>
-            </select>
-          </div>
-          <div style="width: 80px;">
-            <label class="lbl">Points</label>
-            <input type="number" step="0.5" value="${q.points}" onchange="state.questions[${i}].points=Number(this.value); showToast('Changed Q'+${q.id}+' Points');">
-          </div>
-        </div>
-
-        <label class="lbl">Question Text</label>
-        <textarea rows="3" spellcheck="true" oninput="state.questions[${i}].text=this.value">${esc(q.text)}</textarea>
-        
-        ${['multiple_choice_question', 'multiple_answers_question', 'true_false_question'].includes(q.type) ? `
-        <div style="margin-top:16px;">
-          <label class="lbl">Choices (Click to mark correct)</label>
-          ${q.choices.map((c,ci) => {
-              const isAdded = c.isCorrect && !c.originalIsCorrect, isRemoved = !c.isCorrect && c.originalIsCorrect, isUnchanged = c.isCorrect && c.originalIsCorrect;
-              let rowCls = '', dotCls = '', innerDot = '', statusLbl = '', textStyle = '';
-              if (isAdded) { rowCls = 'state-added'; dotCls = 'filled-added'; innerDot = '<div class="choice-inner"></div>'; statusLbl = '<span class="mono" style="font-size:10px;color:var(--ok-tx);font-weight:bold;">\u2713 NEW SELECTION</span>'; } 
-              else if (isRemoved) { rowCls = 'state-removed'; dotCls = 'filled-removed'; innerDot = '<div class="choice-inner" style="background:var(--err-tx)"></div>'; statusLbl = '<span class="mono" style="font-size:10px;color:var(--err-tx);font-weight:bold;">\u2717 PREVIOUS</span>'; textStyle = 'text-decoration:line-through; opacity:0.7;'; } 
-              else if (isUnchanged) { rowCls = 'correct'; dotCls = 'filled'; innerDot = '<div class="choice-inner"></div>'; } 
-              else { if (c.isCorrect) innerDot = '<div class="choice-inner"></div>'; }
-
-              return `
-              <div class="choice-row ${rowCls}" onclick="toggleChoice(${i}, ${ci})">
-                <div class="choice-dot ${dotCls}">${innerDot}</div>
-                <div style="flex:1; display:flex; align-items:center;">
-                  <span style="font-weight:bold; margin-right:6px; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}">${c.id}.</span>
-                  <input type="text" style="border:none; background:transparent; outline:none; font-family:inherit; font-size:inherit; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}; width:90%; ${textStyle}" spellcheck="true" value="${esc(c.text)}" oninput="state.questions[${i}].choices[${ci}].text=this.value;" onclick="event.stopPropagation();">
-                </div>
-                ${statusLbl}
-              </div>`;
-          }).join('')}
-        </div>` : ''}
-
-        ${q.rationale ? `<div style="margin-top:16px;"><label class="lbl">Rationale (Will export as Canvas Feedback)</label><textarea rows="2" spellcheck="true" oninput="state.questions[${i}].rationale=this.value">${esc(q.rationale)}</textarea></div>` : ''}
-        ${q.metadata ? `<div style="margin-top:16px;"><label class="lbl">Extracted ExamSoft Metadata</label><textarea rows="3" style="font-size:11px; font-family:'JetBrains Mono', monospace;" oninput="state.questions[${i}].metadata=this.value">${esc(q.metadata)}</textarea></div>` : ''}
-      `}
-    </div>`:''}
-  </div>`;
-}
-
-function downloadPDF() {
-  try {
-      if (!window.jspdf) { throw new Error("jsPDF library not loaded."); }
-      const { jsPDF } = window.jspdf; const doc = new jsPDF();
-      let y = 20; const margin = 15; const maxWidth = 180; const pageHeight = 280;
-
-      doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.text(state.title || "Exam Review Key", margin, y); y += 10; doc.setFontSize(11);
-
-      state.questions.forEach((q) => {
-        if (y > pageHeight - 20) { doc.addPage(); y = 20; }
-        doc.setFont("helvetica", "bold"); doc.text(`Q${q.id}: ${q.qTitle} (${q.points || 1} pts) - ${typeLabels[q.type] || 'MC'}`, margin, y); y += 6;
-        doc.setFont("helvetica", "normal");
-        const qTextLines = doc.splitTextToSize(q.text || "", maxWidth); doc.text(qTextLines, margin, y); y += (qTextLines.length * 5) + 4;
-
-        (q.choices || []).forEach(c => {
-          if (y > pageHeight - 10) { doc.addPage(); y = 20; }
-          if (c.isCorrect) { doc.setFont("helvetica", "bold"); doc.setTextColor(21, 128, 61); } 
-          else { doc.setFont("helvetica", "normal"); doc.setTextColor(0, 0, 0); }
-          const cTextLines = doc.splitTextToSize(`${c.id}. ${c.text} ${c.isCorrect ? " [CORRECT]" : ""}`, maxWidth - 10);
-          doc.text(cTextLines, margin + 10, y); y += (cTextLines.length * 5) + 2;
-        });
-        
-        if (q.rationale) {
-            doc.setFont("helvetica", "italic"); doc.setTextColor(80, 80, 80);
-            const rLines = doc.splitTextToSize(`Rationale: ${q.rationale}`, maxWidth);
-            doc.text(rLines, margin, y); y += (rLines.length * 5) + 2;
-        }
-        doc.setTextColor(0, 0, 0); y += 6; 
-      });
-      doc.save((state.title || 'Exam').replace(/\W+/g, '_') + '_Review.pdf');
-  } catch (err) {
-      logError("PDF Generation Failed: " + err.message);
-  }
-}
-
-function buildQTI(){
-  const id='assess_'+Date.now();
-  const metaStyle = document.getElementById('metadata-setting').value;
-
-  const items=state.questions.map((q,i)=>{
-    const rid='r'+i, pts=q.points||1, ch=q.choices||[], qtiType = q.type || 'multiple_choice_question';
-    const safeTitle = esc(q.qTitle || `Question ${q.id}`);
-    const labels=ch.map((c,ci)=>`<response_label ident="c${i}_${ci}"><material><mattext texttype="text/html">&lt;p&gt;${esc(c.text)}&lt;/p&gt;</mattext></material></response_label>`).join('');
-    
-    let feedbackXML = q.rationale ? `<itemfeedback ident="general_fb"><material><mattext texttype="text/html">&lt;p&gt;${esc(q.rationale)}&lt;/p&gt;</mattext></material></itemfeedback>` : '';
-
-    let questionTextWithMeta = esc(q.text).replace(/\n/g, '&lt;br&gt;');
-    if (q.metadata && metaStyle !== 'strip') {
-        const tableHTML = buildCompliantHTMLTable(q.metadata);
-        if (metaStyle === 'hidden') {
-            questionTextWithMeta += `\n&lt;!-- EXAMSOFT METADATA: \n${esc(q.metadata)}\n--&gt;`;
-        } else if (metaStyle === 'visible') {
-            questionTextWithMeta += `&lt;br&gt;&lt;br&gt;&lt;strong&gt;Exam Metadata:&lt;/strong&gt;&lt;div style="background:#fafafa; padding:12px; border:1px solid #ccc; border-radius:6px; margin-top:8px;"&gt;${tableHTML}&lt;/div&gt;`;
-        }
-    }
-
-    if (qtiType === 'essay_question' || qtiType === 'short_answer_question') {
-      return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_str ident="${rid}" rcardinality="Single"><render_fib><response_label ident="ans" rshuffle="No"/></render_fib></response_str></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>${feedbackXML}</item>`;
-    }
-
-    const correctIndices = []; ch.forEach((c, ci) => { if (c.isCorrect) correctIndices.push(ci); });
-    if(correctIndices.length === 0 && ch.length > 0) correctIndices.push(0);
-
-    let respCondition = "", rcardinality = "Single";
-    if (qtiType === 'multiple_answers_question') {
-        rcardinality = "Multiple";
-        const conds = correctIndices.map(ci => `<varequal respident="${rid}">c${i}_${ci}</varequal>`).join('');
-        respCondition = `<respcondition continue="No"><conditionvar><and>${conds}</and></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
-    } else {
-        const corrId = `c${i}_${correctIndices[0]}`;
-        respCondition = `<respcondition continue="No"><conditionvar><varequal respident="${rid}">${corrId}</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
-    }
-
-    return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_lid ident="${rid}" rcardinality="${rcardinality}"><render_choice>${labels}</render_choice></response_lid></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>${respCondition}</resprocessing>${feedbackXML}</item>`;
-  }).join('');
-  
-  const a=`<?xml version="1.0" encoding="UTF-8"?><questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/xsd/ims_qtiasiv1p2.xsd"><assessment ident="${id}" title="${esc(state.title)}"><qtimetadata><qtimetadatafield><fieldlabel>cc_profile</fieldlabel><fieldentry>cc.exam.v0p1</fieldentry></qtimetadatafield></qtimetadata><section ident="root_section">${items}</section></assessment></questestinterop>`;
-  const m=`<?xml version="1.0" encoding="UTF-8"?><manifest identifier="man_${Date.now()}" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"><metadata><schema>IMS Content</schema><schemaversion>1.1.3</schemaversion></metadata><organizations/><resources><resource identifier="res1" type="imsqti_xmlv1p2" href="${id}.xml"><file href="${id}.xml"/></resource></resources></manifest>`;
-  return {id,assessment:a,manifest:m};
-}
-
-async function downloadZip(){
-  try {
-      const {id,assessment,manifest}=buildQTI();
-      const zip = new window.JSZip();
-      zip.file('imsmanifest.xml',manifest); zip.file(id+'.xml',assessment);
-      const blob=await zip.generateAsync({type:'blob'});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a'); a.href=url; a.download=state.title+'.zip'; a.click();
-      state.step='done'; render();
-  } catch (err) {
-      logError("ZIP Generation Failed: " + err.message);
-  }
-}
-
-function renderDone(){
-  const vd = document.getElementById('view-done');
-  if (vd) {
-    vd.innerHTML=`
-      <div style="text-align:center;padding:40px;">
-        <h2>Export Complete!</h2>
-        <p style="margin-bottom: 20px; color: var(--text2);">Your QTI ZIP is ready for Canvas.</p>
-        <div style="display:flex; justify-content:center; gap:10px;">
-          <button class="btn btn-outline" onclick="downloadPDF()">Download PDF Review Key</button>
-          <button class="btn btn-primary" onclick="location.reload()">Convert Another Exam</button>
-        </div>
-      </div>
-    `;
-  }
-}
-
-function render(){
-  renderSteps();
-  const vu = document.getElementById('view-upload'); if (vu) vu.style.display=state.step==='upload'?'':'none';
-  const vr = document.getElementById('view-review'); if (vr) vr.style.display=state.step==='review'?'':'none';
-  const vd = document.getElementById('view-done');   if (vd) vd.style.display=state.step==='done'?'':'none';
-  if(state.step==='upload') renderUpload();
-  if(state.step==='review') renderReview();
-  if(state.step==='done') renderDone();
-}
-render();
-</script>
-</body>
-</html>
