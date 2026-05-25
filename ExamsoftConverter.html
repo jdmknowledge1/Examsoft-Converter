@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExamSoft → Canvas (PDF Parser)</title>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #ffffff; --bg2:      #f5f5f4; --bg3:      #eeece9;
+      --text:     #1a1a18; --text2:    #6b6b67;
+      --border:   rgba(0,0,0,0.12); --border2:  rgba(0,0,0,0.22);
+      --radius:   8px; --radius-lg:12px;
+      --info-bg:  #eff6ff; --info-tx: #1d4ed8; --info-bd: rgba(29,78,216,0.3);
+      --ok-bg:    #f0fdf4; --ok-tx:   #15803d; --ok-bd:   rgba(21,128,61,0.3);
+      --warn-bg:  #fffbeb; --warn-tx: #b45309; --warn-bd: rgba(180,83,9,0.3);
+      --err-bg:   #fef2f2; --err-tx:  #b91c1c; --err-bd:  rgba(185,28,28,0.3);
+      --green:    #1D9E75;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:      #121212; --bg2: #1e1e1c; --bg3: #2a2a27;
+        --text:    #f0ede8; --text2: #8a8a86;
+        --border:  rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.2);
+        --info-bg: #0c1a33; --info-tx: #93bbff; --info-bd: rgba(147,187,255,0.25);
+        --ok-bg:   #0a1f12; --ok-tx:  #6ee7a0; --ok-bd:  rgba(110,231,160,0.25);
+        --warn-bg: #1a1200; --warn-tx: #fbbf24; --warn-bd:rgba(251,191,36,0.25);
+        --err-bg:  #1f0a0a; --err-tx:  #fca5a5; --err-bd: rgba(252,165,165,0.25);
+        --green:   #22c55e;
+      }
+    }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg3); color: var(--text); min-height: 100vh; transition: background 0.3s; }
+    .page { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; transition: all 0.3s; }
+    
+    body.lti-mode { background: var(--bg); }
+    body.lti-mode .page { max-width: 100%; padding: 16px; margin: 0; }
+    .lti-badge { display: none; background: var(--info-bg); color: var(--info-tx); border: 1px solid var(--info-bd); font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 8px; vertical-align: middle; }
+    body.lti-mode .lti-badge { display: inline-block; }
+
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .app-title { font-size: 20px; font-weight: 600; display: flex; align-items: center; }
+    .app-sub   { font-size: 12px; color: var(--text2); font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
+
+    .steps { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .step  { display: flex; align-items: center; gap: 6px; }
+    .step-dot { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; border: 0.5px solid var(--border2); background: var(--bg2); color: var(--text2); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; }
+    .step-dot.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .step-dot.done   { background: var(--green); color: #fff; border-color: var(--green); }
+    .step-lbl { font-size: 13px; color: var(--text2); }
+    .step-lbl.active { color: var(--text); font-weight: 500; }
+    .step-sep { width: 16px; height: 0.5px; background: var(--border); }
+
+    .drop-zone { border: 1.5px dashed var(--border2); border-radius: var(--radius-lg); padding: 40px 24px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--bg); }
+    .drop-zone:hover, .drop-zone.drag { border-color: var(--text); background: var(--bg2); }
+
+    .preview-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; width: 100%; height: 200px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text2); resize: vertical; margin-top: 8px; outline: none; }
+    .preview-box:focus { border-color: var(--text); }
+
+    .btn { border-radius: var(--radius); padding: 10px 22px; font-size: 14px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: opacity 0.15s; }
+    .btn-primary { background: var(--text); color: var(--bg); border: none; font-weight: 500; }
+    .btn-primary:disabled { opacity: 0.3; cursor: default; }
+    .btn-secondary { background: transparent; border: 0.5px solid var(--border2); color: var(--text2); }
+    .btn-outline { background: transparent; border: 1px solid var(--text); color: var(--text); }
+    .btn-outline:hover { background: var(--bg2); }
+    .btn-toggle { background: var(--bg); border: 1px solid var(--border2); color: var(--text); font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: background 0.15s; font-weight: 500; }
+    .btn-toggle:hover { background: var(--bg2); }
+
+    textarea, input[type=text], input[type=number], select {
+      background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius);
+      color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px;
+      padding: 8px 10px; outline: none; width: 100%;
+    }
+    textarea:focus, input:focus, select:focus { border-color: var(--text); }
+
+    .q-card { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: 8px; }
+    .q-header { padding: 12px 14px; cursor: pointer; display: flex; align-items: center; gap: 10px; background: var(--bg2); }
+    .q-body { padding: 14px 16px; border-top: 1px solid var(--border); background: var(--bg); }
+
+    .choice-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); margin-bottom: 6px; background: var(--bg); transition: border-color 0.15s; }
+    .choice-row.correct { border-color: var(--green); background: var(--ok-bg); }
+    
+    .choice-row.state-added { border-color: var(--ok-tx); background: var(--ok-bg); border-width: 1.5px; }
+    .choice-row.state-removed { border-color: var(--err-bd); background: var(--err-bg); }
+    .choice-dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--border2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .choice-dot.filled { background: var(--green); border-color: var(--green); }
+    .choice-dot.filled-added { background: var(--ok-tx); border-color: var(--ok-tx); }
+    .choice-dot.filled-removed { background: transparent; border-color: var(--err-tx); }
+    .choice-inner { width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+
+    .stat-card { border-radius: var(--radius); padding: 10px 14px; text-align: center; }
+    .alert-err  { background: var(--err-bg);  border: 1px solid var(--err-bd);  border-radius: var(--radius); padding: 12px; font-size: 13px; color: var(--err-tx); }
+    .alert-warn { background: var(--warn-bg); border: 1px solid var(--warn-bd); border-radius: var(--radius); padding: 12px; font-size: 13px; color: var(--warn-tx); }
+    .lbl { font-size: 11px; color: var(--text2); font-family: 'JetBrains Mono', monospace; margin-bottom: 5px; display: block; font-weight: bold; }
+    .spinner { width: 16px; height: 16px; border: 2px solid var(--border2); border-top-color: var(--text); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+    .toast { background: var(--text); color: var(--bg); padding: 12px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.2); opacity: 0; transform: translateY(10px); transition: opacity 0.3s, transform 0.3s; display: flex; align-items: center; gap: 8px; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    #error-console { display: none; position: fixed; top: 10%; left: 10%; width: 80%; max-height: 80%; background: var(--bg); border: 2px solid var(--err-tx); border-radius: var(--radius-lg); box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 10000; overflow: hidden; flex-direction: column; }
+    #error-console-header { background: var(--err-bg); color: var(--err-tx); padding: 12px 16px; font-weight: bold; border-bottom: 1px solid var(--err-bd); display: flex; justify-content: space-between; align-items: center; }
+    #error-console-body { padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text); background: var(--bg2); white-space: pre-wrap; flex: 1; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="app-header">
+    <div>
+      <div class="app-title">ExamSoft → Canvas <span class="lti-badge">LTI MODE</span></div>
+      <div class="app-sub">PDF Files Only • LTI Support & Global Error Catching</div>
+    </div>
+    <div id="steps" class="steps"></div>
+  </div>
+
+  <div id="error-alert-btn" style="display:none; margin-bottom: 20px;">
+      <button class="btn btn-primary" style="background: var(--err-tx); width: 100%;" onclick="document.getElementById('error-console').style.display='flex'">⚠️ System Error Detected - View Logs</button>
+  </div>
+
+  <div id="view-upload"></div>
+  <div id="view-review" style="display:none;"></div>
+  <div id="view-done"   style="display:none;"></div>
+</div>
+
+<div id="error-console">
+    <div id="error-console-header">
+        <span>Application Error Logs</span>
+        <button class="btn-secondary" style="border:none; padding:4px 8px; cursor:pointer;" onclick="document.getElementById('error-console').style.display='none'">Close</button>
+    </div>
+    <div id="error-console-body"></div>
+</div>
+
+<script>
+// ── Global Memory (Canvas iFrame Safe) ─────────────────────────────────────────
+window.state = { step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false };
+window.expanded = {}; 
+window.previewMode = {};
+
+// ── Global Error Interceptor ──────────────────────────────────────────────────
+window.appLogs = [];
+const errorBody = document.getElementById('error-console-body');
+const errorBtn = document.getElementById('error-alert-btn');
+
+window.logError = function(msg) {
+    const time = new Date().toLocaleTimeString();
+    window.appLogs.push(`[${time}] ${msg}`);
+    if (errorBody) errorBody.innerHTML = window.appLogs.join('\n\n');
+    if (errorBtn) errorBtn.style.display = 'block';
+    console.warn("Caught Error:", msg);
+}
+
+window.onerror = function(msg, url, lineNo, columnNo, error) {
+    window.logError(`SCRIPT ERROR: ${msg}\nLine: ${lineNo}:${columnNo}`);
+    return false;
+};
+
+window.addEventListener('unhandledrejection', function(event) {
+    window.logError(`ASYNC ERROR (Promise Rejection):\n${event.reason}`);
+});
+
+const originalConsoleError = console.error;
+console.error = function(...args) {
+    window.logError(`CONSOLE ERROR: ${args.join(' ')}`);
+    originalConsoleError.apply(console, args);
+};
+
+// ── LTI / iFrame Detection ────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+    if (window.self !== window.top) {
+        document.body.classList.add('lti-mode');
+        console.log("LTI / iFrame Mode Detected. Adjusting layout.");
+    }
+});
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+window.showToast = function(message) {
+  let container = document.getElementById('toast-container');
+  if (!container) { container = document.createElement('div'); container.id = 'toast-container'; document.body.appendChild(container); }
+  const toast = document.createElement('div'); toast.className = 'toast';
+  toast.innerHTML = `<span style="color:var(--green);">✓</span> ${window.esc(message)}`;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 3000);
+}
+
+window.esc = function(s=''){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+window.qtiXmlEscape = function(s='') {
+  return String(s).replace(/&/g, '&amp;amp;').replace(/</g, '&amp;lt;').replace(/>/g, '&amp;gt;').replace(/"/g, '&amp;quot;');
+}
+
+window.autoFixTypos = function(text) {
+  if (!text) return "";
+  let clean = text.replace(/ {2,}/g, ' ').replace(/ \./g, '.').replace(/ ,/g, ',').replace(/ \?/g, '?')
+                  .replace(/\bshoud\b/gi, 'should').replace(/\bH20\b/gi, 'H2O')
+                  .replace(/\badminster\b/gi, 'administer').replace(/\brecieving\b/gi, 'receiving')
+                  .replace(/(^\s*|[.!?]\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  return clean.trim();
+}
+
+const metaPatterns = [
+  /Item Categories:/i, /Category Name/i, /Category Path/i, /Bloom Taxonomy/i,
+  /Item Psychometrics:/i, /Difficulty Level/i, /Point Biserial/i, /Upper 27%/i, /Lower 27%/i,
+  /Item ID:/i, /Item Creator:/i, /The following table:/i,
+  /^[A-Z]{3}\s\d{3}/, 
+  /^\d{2}\s?-/,       
+  /^[\d\.\-\s]+$/,    
+  /\\/                
+];
+
+window.isMetadataLine = function(line) {
+  return metaPatterns.some(regex => regex.test(line));
+}
+
+window.universalParseText = function(rawText) {
+  const questions = [];
+  let lines = rawText.split('\n'), currentQ = null, parseState = 'search'; 
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    const qMatch = trimmed.match(/^Question\s*#:\s*(\d+)/i);
+    if (qMatch) {
+      if (currentQ && (currentQ.text || currentQ.choices.length > 0)) finalizeQuestion(currentQ, questions);
+      currentQ = { id: parseInt(qMatch[1], 10), qTitle: "", type: "multiple_choice_question", text: "", choices: [], points: 1, rationale: "", metadata: "" };
+      parseState = 'question';
+      return;
+    }
+
+    if (!currentQ) return;
+
+    if (window.isMetadataLine(trimmed)) {
+       parseState = 'metadata';
+    } else if (parseState === 'metadata' && !trimmed.match(/^([✔✓\*3])?\s*([a-zA-Z])\s*[\.\)]/) && !/^Rationale:/i.test(trimmed)) {
+       parseState = 'question';
+    }
+
+    const weightMatch = trimmed.match(/^Item Weight:\s*([\d\.]+)/i);
+    if (weightMatch) { currentQ.points = parseFloat(weightMatch[1]); return; }
+
+    const descMatch = trimmed.match(/^Item Description:\s*(.*)/i);
+    if (descMatch) { currentQ.itemDesc = descMatch[1].trim(); return; }
+
+    const rationaleMatch = trimmed.match(/^Rationale:\s*(.*)/i);
+    if (rationaleMatch) {
+      parseState = 'rationale';
+      currentQ.rationale += rationaleMatch[1];
+      return;
+    }
+
+    const cMatch = trimmed.match(/^([✔✓\*3])?\s*([a-zA-Z])\s*[\.\)]\s*(.*)/);
+    if (cMatch) {
+      currentQ.choices.push({ id: cMatch[2].toUpperCase(), text: cMatch[3], isCorrect: !!cMatch[1] });
+      parseState = 'choices';
+      return;
+    }
+
+    if (parseState === 'question') {
+      currentQ.text += (currentQ.text ? " " : "") + trimmed;
+    } else if (parseState === 'choices' && currentQ.choices.length > 0) {
+      currentQ.choices[currentQ.choices.length - 1].text += " " + trimmed;
+    } else if (parseState === 'rationale') {
+      currentQ.rationale += (currentQ.rationale ? " " : "") + trimmed;
+    } else if (parseState === 'metadata') {
+      currentQ.metadata += (currentQ.metadata ? "\n" : "") + trimmed;
+    }
+  });
+
+  if (currentQ && (currentQ.text || currentQ.choices.length > 0)) finalizeQuestion(currentQ, questions);
+
+  function finalizeQuestion(q, arr) {
+      q.text = window.autoFixTypos(q.text);
+      q.choices.forEach(c => { c.text = window.autoFixTypos(c.text); c.originalIsCorrect = c.isCorrect; });
+      q.rationale = window.autoFixTypos(q.rationale);
+      
+      let genTitle = q.text.replace(/<[^>]*>?/gm, '').trim();
+      if (genTitle.length > 50) genTitle = genTitle.substring(0, 50) + "...";
+      q.qTitle = genTitle || q.itemDesc || `Question ${q.id}`;
+
+      if (q.choices.filter(c => c.isCorrect).length > 1) q.type = 'multiple_answers_question';
+      arr.push(q);
+  }
+
+  return { title: "PDF ExamSoft Import", questions, fixes: ["Analyzed and parsed custom metadata layout."] };
+}
+
+window.buildCompliantHTMLTable = function(text) {
+  if (!text) return '';
+  let str = text.replace(/"\s*\n\s*,\s*"/g, '","').replace(/"\s*\n\s*$/gm, '"').replace(/^"\s*\n\s*/gm, '"');
+  let lines = str.split('\n'), out = '', inTable = false;
+  
+  lines.forEach(line => {
+      let t = line.trim();
+      if (!t || t === '"') return;
+      if (t.includes('","') || (t.startsWith('"') && t.endsWith('"') && t.includes(','))) {
+          if (!inTable) {
+              out += '&lt;table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%; font-size: 11px; margin-top: 8px; margin-bottom: 16px;"&gt;&lt;tbody&gt;';
+              inTable = true;
+          }
+          let cells = t.split('","').map(c => c.replace(/(^"|"$)/g, '').trim());
+          out += '&lt;tr&gt;';
