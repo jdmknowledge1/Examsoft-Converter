@@ -21,7 +21,7 @@
       --ok-bg:    #f0fdf4; --ok-tx:   #15803d; --ok-bd:   rgba(21,128,61,0.3);
       --warn-bg:  #fffbeb; --warn-tx: #b45309; --warn-bd: rgba(180,83,9,0.3);
       --err-bg:   #fef2f2; --err-tx:  #b91c1c; --err-bd:  rgba(185,28,28,0.3);
-      --green:    #1D9E75;
+      --green:    #10b981; --blue:     #3b82f6; --red:      #ef4444;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -32,7 +32,7 @@
         --ok-bg:   #0a1f12; --ok-tx:  #6ee7a0; --ok-bd:  rgba(110,231,160,0.25);
         --warn-bg: #1a1200; --warn-tx: #fbbf24; --warn-bd:rgba(251,191,36,0.25);
         --err-bg:  #1f0a0a; --err-tx:  #fca5a5; --err-bd: rgba(252,165,165,0.25);
-        --green:   #22c55e;
+        --green:   #22c55e; --blue:     #60a5fa; --red:      #f87171;
       }
     }
     body { font-family: 'DM Sans', sans-serif; background: var(--bg3); color: var(--text); min-height: 100vh; transition: background 0.3s; }
@@ -115,7 +115,7 @@
   <div class="app-header">
     <div>
       <div class="app-title">ExamSoft → Canvas <span class="lti-badge">LTI MODE</span></div>
-      <div class="app-sub">PDF Files Only • LTI Support & Global Error Catching</div>
+      <div class="app-sub">PDF Files Only • Classic Quizzes and New Quizzes Converter</div>
     </div>
     <div id="steps" class="steps"></div>
   </div>
@@ -139,9 +139,13 @@
 
 <script>
 // ── Global Memory (Canvas iFrame Safe) ─────────────────────────────────────────
-window.state = { step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false };
+window.state = { 
+  step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false,
+  editingTitle: false, showSettings: false, metaStyle: 'visible'
+};
 window.expanded = {}; 
-window.previewMode = {};
+window.editMode = {}; // false = Preview HTML, true = Edit Form
+window.isDirty = {};  // Tracks if the user altered the form
 
 // ── Global Error Interceptor ──────────────────────────────────────────────────
 window.appLogs = [];
@@ -170,6 +174,35 @@ console.error = function(...args) {
     window.logError(`CONSOLE ERROR: ${args.join(' ')}`);
     originalConsoleError.apply(console, args);
 };
+
+// ── LTI Configuration URL Router ──────────────────────────────────────────────
+function serveLtiXmlConfig() {
+    const currentUrl = window.location.href.split('?')[0];
+    const xmlConfig = `<?xml version="1.0" encoding="UTF-8"?>
+<cartridge_basiclti_link xmlns="http://www.imsglobal.org/xsd/imslticc_v1p0" xmlns:blti="http://www.imsglobal.org/xsd/imsblti_v1p0" xmlns:lticm="http://www.imsglobal.org/xsd/imslticm_v1p1" xmlns:lticp="http://www.imsglobal.org/xsd/imslticp_v1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imslticc_v1p0 http://www.imsglobal.org/xsd/imslticc_v1p0.xsd">
+  <blti:title>ExamSoft Converter</blti:title>
+  <blti:description>Converts ExamSoft exports into Canvas QTI packages.</blti:description>
+  <blti:launch_url>${currentUrl}</blti:launch_url>
+  <blti:extensions platform="canvas.instructure.com">
+    <lticm:property name="privacy_level">anonymous</lticm:property>
+    <lticm:options name="course_navigation">
+      <lticm:property name="url">${currentUrl}</lticm:property>
+      <lticm:property name="text">ExamSoft Converter</lticm:property>
+      <lticm:property name="visibility">admins</lticm:property>
+      <lticm:property name="default">enabled</lticm:property>
+    </lticm:options>
+  </blti:extensions>
+</cartridge_basiclti_link>`;
+
+    document.open("text/xml");
+    document.write(xmlConfig);
+    document.close();
+}
+
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.has('config') || window.location.hash === '#init-lti') {
+    serveLtiXmlConfig();
+}
 
 // ── LTI / iFrame Detection ────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -292,6 +325,7 @@ window.universalParseText = function(rawText) {
   return { title: "PDF ExamSoft Import", questions, fixes: ["Analyzed and parsed custom metadata layout."] };
 }
 
+// Generates escaped tables for Classic Quizzes (QTI 1.2)
 window.buildCompliantHTMLTable = function(text) {
   if (!text) return '';
   let str = text.replace(/"\s*\n\s*,\s*"/g, '","').replace(/"\s*\n\s*$/gm, '"').replace(/^"\s*\n\s*/gm, '"');
@@ -318,17 +352,67 @@ window.buildCompliantHTMLTable = function(text) {
   return out;
 }
 
+// Generates native HTML tags for New Quizzes (QTI 2.1)
+window.buildNativeHTMLTable = function(text) {
+  if (!text) return '';
+  let str = text.replace(/"\s*\n\s*,\s*"/g, '","').replace(/"\s*\n\s*$/gm, '"').replace(/^"\s*\n\s*/gm, '"');
+  let lines = str.split('\n'), out = '', inTable = false;
+  
+  lines.forEach(line => {
+      let t = line.trim();
+      if (!t || t === '"') return;
+      if (t.includes('","') || (t.startsWith('"') && t.endsWith('"') && t.includes(','))) {
+          if (!inTable) {
+              out += '<table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%; font-size: 11px; margin-top: 8px; margin-bottom: 16px;"><tbody>';
+              inTable = true;
+          }
+          let cells = t.split('","').map(c => c.replace(/(^"|"$)/g, '').trim());
+          out += '<tr>';
+          cells.forEach((c) => { out += `<td style="border: 1px solid #ccc; padding: 6px;">${window.esc(c)}</td>`; });
+          out += '</tr>';
+      } else {
+          if (inTable) { out += '</tbody></table>'; inTable = false; }
+          out += `<p><strong>${window.esc(t)}</strong></p>`;
+      }
+  });
+  if (inTable) out += '</tbody></table>';
+  return out;
+}
+
 const typeLabels = { multiple_choice_question: 'MC', multiple_answers_question: 'MA', true_false_question: 'T/F', essay_question: 'Essay', short_answer_question: 'Short Ans' };
+
+// Handle Question State changes & visual logic
+window.markDirty = function(i) {
+    window.isDirty[i] = true;
+    const btn = document.getElementById(`btn-edit-${i}`);
+    if (btn && btn.innerText.includes('Done')) {
+        btn.innerText = '💾 Save';
+    }
+}
+
+window.handleEditToggle = function(i) {
+    window.expanded[i] = true; // Always expand card when toggling mode
+    if (window.editMode[i]) {
+        // Leaving Edit Mode -> Going to Preview
+        window.editMode[i] = false;
+        if (window.isDirty[i]) { window.showToast("Changes saved."); }
+        window.isDirty[i] = false;
+    } else {
+        // Leaving Preview -> Entering Edit Form
+        window.editMode[i] = true;
+        window.isDirty[i] = false;
+    }
+    window.renderReview();
+}
 
 window.toggleChoice = function(qi, ci) {
   const q = window.state.questions[qi], choice = q.choices[ci];
   if (q.type === 'multiple_answers_question') {
     choice.isCorrect = !choice.isCorrect;
-    window.showToast(choice.isCorrect ? `Added ${choice.id} to correct answers (Q${q.id})` : `Removed ${choice.id} (Q${q.id})`);
   } else {
     q.choices.forEach((x, idx) => x.isCorrect = (idx === ci)); 
-    window.showToast(`Correct answer updated to ${choice.id} (Q${q.id})`);
   }
+  window.markDirty(qi);
   window.renderReview();
 }
 
@@ -381,7 +465,7 @@ window.renderUpload = function() {
         window.state.title = window.state.file ? window.state.file.name.replace(/\.[^/.]+$/, "") : parsed.title;
         window.state.questions = parsed.questions;
         window.state.fixes = parsed.fixes;
-        window.expanded = {}; window.previewMode = {};
+        window.expanded = {}; window.editMode = {}; window.isDirty = {};
         window.state.questions.forEach((_,i) => window.expanded[i] = false);
         window.state.step = 'review';
         window.render();
@@ -428,8 +512,8 @@ window.renderReview = function() {
   v.innerHTML=`
     <div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:flex-start;">
       <div>
-        <h3 style="margin-bottom:4px;">Results & Verification</h3>
-        <p style="font-size:13px; color:var(--text2); margin-top:0;">Toggle "Preview" to see exactly how Canvas will render the question.</p>
+        <h3 style="margin-bottom:4px;">Test Conversion Results</h3>
+        <p style="font-size:13px; color:var(--text2); margin-top:0;">Toggle "Edit" to modify any parsed text or answers before exporting.</p>
       </div>
       <div class="stat-card" style="background: ${qCount > 0 ? 'var(--ok-bg)' : 'var(--err-bg)'}; color: ${qCount > 0 ? 'var(--ok-tx)' : 'var(--err-tx)'}; border: 1px solid ${qCount > 0 ? 'var(--ok-bd)' : 'var(--err-bd)'};">
         <span style="font-size:18px; font-weight:bold;">${qCount}</span>
@@ -439,19 +523,28 @@ window.renderReview = function() {
 
     ${qCount === 0 ? `<div class="alert-err" style="margin-bottom: 20px;"><strong>⚠️ No questions were detected!</strong></div>` : ''}
 
-    <div style="display:flex; gap: 16px; margin-bottom:16px; flex-wrap:wrap;">
-      <div style="flex:2; min-width: 250px;">
-        <label class="lbl">Global Canvas Quiz Title</label>
-        <input type="text" id="quiz-title" spellcheck="true" value="${window.esc(window.state.title)}" oninput="window.state.title=this.value">
-      </div>
-      <div style="flex:1; min-width: 200px;">
-        <label class="lbl">Canvas Metadata Export Setting</label>
-        <select id="metadata-setting">
-          <option value="visible" selected>Visible HTML Table (Students will see it)</option>
-          <option value="hidden">Hidden HTML Comments (Invisible to students)</option>
-          <option value="strip">Strip Completely from Canvas</option>
-        </select>
-      </div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:16px; align-items: flex-end;">
+        <div style="flex:1; max-width: 500px;">
+            <label class="lbl">Global Canvas Quiz Title</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input type="text" id="quiz-title" spellcheck="true" value="${window.esc(window.state.title)}" oninput="window.state.title=this.value" ${window.state.editingTitle ? '' : 'disabled'} style="flex:1; ${window.state.editingTitle ? '' : 'background:transparent; border-color:transparent; padding-left:0; font-weight:bold; font-size:16px; color:var(--text);'}">
+                <button class="btn-toggle" onclick="window.state.editingTitle = !window.state.editingTitle; window.renderReview();" title="Edit Title">${window.state.editingTitle ? '💾 Save' : '✏️'}</button>
+            </div>
+        </div>
+        
+        <div style="position:relative;">
+            <button class="btn-toggle" style="font-size:18px; padding: 4px 10px; border:none; background:transparent;" onclick="window.state.showSettings = !window.state.showSettings; window.renderReview();" title="Advanced Settings">⋮</button>
+            ${window.state.showSettings ? `
+            <div style="position:absolute; right:0; top: 100%; background:var(--bg); border:1px solid var(--border2); border-radius:var(--radius); padding:16px; box-shadow:0 10px 25px rgba(0,0,0,0.15); z-index:100; width: 280px;">
+                <label class="lbl">Canvas Metadata Export Setting</label>
+                <select id="metadata-setting" onchange="window.state.metaStyle=this.value; window.state.showSettings=false; window.renderReview();">
+                  <option value="visible" ${window.state.metaStyle==='visible'?'selected':''}>Visible HTML Table (Students see it)</option>
+                  <option value="hidden" ${window.state.metaStyle==='hidden'?'selected':''}>Hidden HTML Comments (Invisible)</option>
+                  <option value="strip" ${window.state.metaStyle==='strip'?'selected':''}>Strip Completely</option>
+                </select>
+            </div>
+            ` : ''}
+        </div>
     </div>
     
     <div id="q-list">${window.state.questions.map((q,i)=>window.renderCard(q,i)).join('')}</div>
@@ -461,11 +554,12 @@ window.renderReview = function() {
       <textarea id="json-preview" class="preview-box" style="display:none; height: 150px; margin-top: 8px;" readonly></textarea>
     </div>
     
-    <div style="display:flex;justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:20px;">
+    <div style="display:flex;justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:20px; border-top: 1px solid var(--border); padding-top: 20px;">
       <button class="btn btn-secondary" onclick="location.reload()">\u2190 Start Over</button>
-      <div style="display:flex; gap:10px;">
-        <button class="btn btn-outline" id="pdf-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadPDF()">Download PDF Key</button>
-        <button class="btn btn-primary" id="export-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip()">Download QTI ZIP</button>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-outline" style="border-color:var(--red); color:var(--red);" id="pdf-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadPDF()">Download PDF Key</button>
+        <button class="btn btn-outline" style="border-color:var(--blue); color:var(--blue);" id="export-classic-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('classic')">Classic Quizzes ZIP</button>
+        <button class="btn btn-primary" style="background:var(--green); color:white;" id="export-new-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('new')">New Quizzes ZIP</button>
       </div>
     </div>
   `;
@@ -481,10 +575,17 @@ window.renderReview = function() {
 }
 
 window.renderCard = function(q,i) {
-  const exp = window.expanded[i]; const isPreview = window.previewMode[i];
+  const exp = window.expanded[i]; 
+  const isEdit = window.editMode[i];
+  
+  // Logic for the button text
+  let btnText = "✏️ Edit";
+  if (isEdit) {
+      btnText = window.isDirty[i] ? "💾 Save" : "✓ Done";
+  }
+
   const typeBadgeColor = q.type === 'multiple_answers_question' ? 'var(--info-bg)' : 'var(--bg2)';
   const typeBadgeText = q.type === 'multiple_answers_question' ? 'var(--info-tx)' : 'var(--text2)';
-  
   const metaBadge = q.metadata ? `<span style="background:var(--warn-bg); color:var(--warn-tx); font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace; margin-left:4px;" title="This question has an attached metadata table">📊 TABLE</span>` : '';
 
   return `<div class="q-card">
@@ -493,11 +594,11 @@ window.renderCard = function(q,i) {
       <span style="background:${typeBadgeColor}; color:${typeBadgeText}; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace;">${typeLabels[q.type] || 'MC'}</span>
       ${metaBadge}
       <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:6px;"><strong>${window.esc(q.qTitle)}</strong></span>
-      <button class="btn-toggle" onclick="event.stopPropagation(); window.previewMode[${i}] = !window.previewMode[${i}]; window.renderReview();">${isPreview ? '✏️ Edit' : '👁️ Preview'}</button>
+      <button id="btn-edit-${i}" class="btn-toggle" onclick="event.stopPropagation(); window.handleEditToggle(${i});">${btnText}</button>
       <span style="margin-left:4px;">${exp?'▾':'▸'}</span>
     </div>
     ${exp?`<div class="q-body">
-      ${isPreview ? `
+      ${!isEdit ? `
         <div style="padding: 16px; background: var(--bg); border: 1px solid var(--border2); border-radius: var(--radius); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
             <div style="display:flex; justify-content:space-between; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 14px;">
                 <span style="font-weight:bold; font-size:16px; color: var(--text);">${window.esc(q.qTitle)}</span>
@@ -513,10 +614,10 @@ window.renderCard = function(q,i) {
                 `).join('')}
             </div>
             ${q.rationale ? `<div style="background: var(--info-bg); border-left: 4px solid var(--info-tx); padding: 12px; font-size: 13px; color: var(--text); margin-bottom: 16px;"><strong style="color: var(--info-tx); display:block; margin-bottom: 6px;">Canvas Rationale / Feedback:</strong>${window.esc(q.rationale).replace(/\n/g, '<br>')}</div>` : ''}
-            ${q.metadata && document.getElementById('metadata-setting').value === 'visible' ? `
+            ${q.metadata && window.state.metaStyle === 'visible' ? `
                 <div style="background: #fafafa; padding: 12px; border-radius: 6px; font-size: 11px; color: var(--text2); overflow-x: auto; border: 1px solid #ccc;">
                     <strong style="display:block; margin-bottom: 6px; font-family: 'DM Sans', sans-serif;">Exam Metadata:</strong>
-                    ${window.buildCompliantHTMLTable(q.metadata).replace(/&lt;/g, '<').replace(/&gt;/g, '>')}
+                    ${window.buildNativeHTMLTable(q.metadata)}
                 </div>
             ` : ''}
         </div>
@@ -524,11 +625,11 @@ window.renderCard = function(q,i) {
         <div style="display:flex; gap: 12px; margin-bottom: 12px;">
           <div style="flex:1;">
             <label class="lbl">Individual Question Title</label>
-            <input type="text" spellcheck="true" value="${window.esc(q.qTitle)}" oninput="window.state.questions[${i}].qTitle=this.value;">
+            <input type="text" spellcheck="true" value="${window.esc(q.qTitle)}" oninput="window.markDirty(${i}); window.state.questions[${i}].qTitle=this.value;">
           </div>
           <div style="flex:1;">
             <label class="lbl">Canvas Question Type</label>
-            <select onchange="window.state.questions[${i}].type=this.value; window.showToast('Changed Q'+${q.id}+' Type'); window.renderReview();">
+            <select onchange="window.markDirty(${i}); window.state.questions[${i}].type=this.value;">
               <option value="multiple_choice_question" ${q.type==='multiple_choice_question'?'selected':''}>Multiple Choice</option>
               <option value="multiple_answers_question" ${q.type==='multiple_answers_question'?'selected':''}>Multiple Answers (MA)</option>
               <option value="true_false_question" ${q.type==='true_false_question'?'selected':''}>True/False</option>
@@ -538,12 +639,12 @@ window.renderCard = function(q,i) {
           </div>
           <div style="width: 80px;">
             <label class="lbl">Points</label>
-            <input type="number" step="0.5" value="${q.points}" onchange="window.state.questions[${i}].points=Number(this.value); window.showToast('Changed Q'+${q.id}+' Points');">
+            <input type="number" step="0.5" value="${q.points}" oninput="window.markDirty(${i}); window.state.questions[${i}].points=Number(this.value);">
           </div>
         </div>
 
         <label class="lbl">Question Text</label>
-        <textarea rows="3" spellcheck="true" oninput="window.state.questions[${i}].text=this.value">${window.esc(q.text)}</textarea>
+        <textarea rows="3" spellcheck="true" oninput="window.markDirty(${i}); window.state.questions[${i}].text=this.value">${window.esc(q.text)}</textarea>
         
         ${['multiple_choice_question', 'multiple_answers_question', 'true_false_question'].includes(q.type) ? `
         <div style="margin-top:16px;">
@@ -561,15 +662,15 @@ window.renderCard = function(q,i) {
                 <div class="choice-dot ${dotCls}">${innerDot}</div>
                 <div style="flex:1; display:flex; align-items:center;">
                   <span style="font-weight:bold; margin-right:6px; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}">${c.id}.</span>
-                  <input type="text" style="border:none; background:transparent; outline:none; font-family:inherit; font-size:inherit; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}; width:90%; ${textStyle}" spellcheck="true" value="${window.esc(c.text)}" oninput="window.state.questions[${i}].choices[${ci}].text=this.value;" onclick="event.stopPropagation();">
+                  <input type="text" style="border:none; background:transparent; outline:none; font-family:inherit; font-size:inherit; color:${isRemoved ? 'var(--err-tx)' : 'inherit'}; width:90%; ${textStyle}" spellcheck="true" value="${window.esc(c.text)}" oninput="window.markDirty(${i}); window.state.questions[${i}].choices[${ci}].text=this.value;" onclick="event.stopPropagation();">
                 </div>
                 ${statusLbl}
               </div>`;
           }).join('')}
         </div>` : ''}
 
-        ${q.rationale ? `<div style="margin-top:16px;"><label class="lbl">Rationale (Will export as Canvas Feedback)</label><textarea rows="2" spellcheck="true" oninput="window.state.questions[${i}].rationale=this.value">${window.esc(q.rationale)}</textarea></div>` : ''}
-        ${q.metadata ? `<div style="margin-top:16px;"><label class="lbl">Extracted ExamSoft Metadata</label><textarea rows="3" style="font-size:11px; font-family:'JetBrains Mono', monospace;" oninput="window.state.questions[${i}].metadata=this.value">${window.esc(q.metadata)}</textarea></div>` : ''}
+        ${q.rationale ? `<div style="margin-top:16px;"><label class="lbl">Rationale (Will export as Canvas Feedback)</label><textarea rows="2" spellcheck="true" oninput="window.markDirty(${i}); window.state.questions[${i}].rationale=this.value">${window.esc(q.rationale)}</textarea></div>` : ''}
+        ${q.metadata ? `<div style="margin-top:16px;"><label class="lbl">Extracted ExamSoft Metadata</label><textarea rows="3" style="font-size:11px; font-family:'JetBrains Mono', monospace;" oninput="window.markDirty(${i}); window.state.questions[${i}].metadata=this.value">${window.esc(q.metadata)}</textarea></div>` : ''}
       `}
     </div>`:''}
   </div>`;
@@ -610,9 +711,10 @@ window.downloadPDF = function() {
   }
 }
 
-window.buildQTI = function() {
+// ── CLASSIC QUIZZES ENGINE (QTI 1.2) ──────────────────────────────────────────
+window.buildQTI_Classic = function() {
   const id='assess_'+Date.now();
-  const metaStyle = document.getElementById('metadata-setting').value;
+  const metaStyle = window.state.metaStyle || 'visible';
 
   const items=window.state.questions.map((q,i)=>{
     const rid='r'+i, pts=q.points||1, ch=q.choices||[], qtiType = q.type || 'multiple_choice_question';
@@ -656,15 +758,102 @@ window.buildQTI = function() {
   return {id,assessment:a,manifest:m};
 }
 
-window.downloadZip = async function() {
+// ── NEW QUIZZES ENGINE (QTI 2.1) ──────────────────────────────────────────────
+window.buildQTI_NewQuizzes = function() {
+  const manifestId = 'man_' + Date.now();
+  const metaStyle = window.state.metaStyle || 'visible';
+  const zip = new window.JSZip();
+  let resourcesXml = '';
+
+  window.state.questions.forEach((q, i) => {
+    const itemId = `item_${i}`;
+    const safeTitle = window.esc(q.qTitle || `Question ${q.id}`);
+    const pts = q.points || 1;
+    const qtiType = q.type || 'multiple_choice_question';
+
+    let questionTextWithMeta = window.esc(q.text).replace(/\n/g, '<br/>');
+    if (q.metadata && metaStyle !== 'strip') {
+        const tableHTML = window.buildNativeHTMLTable(q.metadata);
+        if (metaStyle === 'hidden') {
+            questionTextWithMeta += `\n`;
+        } else if (metaStyle === 'visible') {
+            questionTextWithMeta += `<br/><br/><strong>Exam Metadata:</strong><div style="background:#fafafa; padding:12px; border:1px solid #ccc; border-radius:6px; margin-top:8px;">${tableHTML}</div>`;
+        }
+    }
+
+    let interactionXml = ''; let responseDeclXml = ''; let correctValues = '';
+
+    if (qtiType === 'multiple_choice_question' || qtiType === 'true_false_question') {
+       const correctIndex = q.choices.findIndex(c => c.isCorrect) >= 0 ? q.choices.findIndex(c => c.isCorrect) : 0;
+       correctValues = `<value>Choice_${correctIndex}</value>`;
+       const choicesXml = q.choices.map((c, ci) => `<simpleChoice identifier="Choice_${ci}">${window.esc(c.text)}</simpleChoice>`).join('');
+       responseDeclXml = `<responseDeclaration identifier="RESPONSE" cardinality="single" baseType="identifier"><correctResponse>${correctValues}</correctResponse></responseDeclaration>`;
+       interactionXml = `<choiceInteraction responseIdentifier="RESPONSE" shuffle="false" maxChoices="1">${choicesXml}</choiceInteraction>`;
+    } else if (qtiType === 'multiple_answers_question') {
+       const correctIndices = []; q.choices.forEach((c, ci) => { if (c.isCorrect) correctIndices.push(ci); });
+       if(correctIndices.length === 0 && q.choices.length > 0) correctIndices.push(0);
+       correctValues = correctIndices.map(ci => `<value>Choice_${ci}</value>`).join('');
+       const choicesXml = q.choices.map((c, ci) => `<simpleChoice identifier="Choice_${ci}">${window.esc(c.text)}</simpleChoice>`).join('');
+       responseDeclXml = `<responseDeclaration identifier="RESPONSE" cardinality="multiple" baseType="identifier"><correctResponse>${correctValues}</correctResponse></responseDeclaration>`;
+       interactionXml = `<choiceInteraction responseIdentifier="RESPONSE" shuffle="false" maxChoices="0">${choicesXml}</choiceInteraction>`;
+    } else if (qtiType === 'essay_question') {
+       responseDeclXml = `<responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string"/>`;
+       interactionXml = `<extendedTextInteraction responseIdentifier="RESPONSE"/>`;
+    } else if (qtiType === 'short_answer_question') {
+       responseDeclXml = `<responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string"/>`;
+       interactionXml = `<textEntryInteraction responseIdentifier="RESPONSE"/>`;
+    }
+
+    let feedbackXml = q.rationale ? `<modalFeedback outcomeIdentifier="FEEDBACK" identifier="GENERAL" showHide="show">${window.esc(q.rationale)}</modalFeedback>` : '';
+
+    const itemXml = `<?xml version="1.0" encoding="UTF-8"?>
+<assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsqti_v2p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/imsqti_v2p1.xsd" identifier="${itemId}" title="${safeTitle}" adaptive="false" timeDependent="false">
+  ${responseDeclXml}
+  <outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float"><defaultValue><value>${pts}</value></defaultValue></outcomeDeclaration>
+  <outcomeDeclaration identifier="MAXSCORE" cardinality="single" baseType="float"><defaultValue><value>${pts}</value></defaultValue></outcomeDeclaration>
+  <itemBody>
+    <div>${questionTextWithMeta}</div>
+    ${interactionXml}
+  </itemBody>
+  ${feedbackXml}
+</assessmentItem>`;
+
+    zip.file(`${itemId}.xml`, itemXml);
+    resourcesXml += `<resource identifier="res_${itemId}" type="imsqti_item_xmlv2p1" href="${itemId}.xml"><file href="${itemId}.xml"/></resource>\n`;
+  });
+
+  const manifestXml = `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="${manifestId}" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imscp_v1p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/qtiv2p1_imscpv1p2_v1p0.xsd">
+  <metadata><schema>QTIv2.1 Package</schema><schemaversion>1.0.0</schemaversion></metadata>
+  <organizations/>
+  <resources>${resourcesXml}</resources>
+</manifest>`;
+
+  zip.file('imsmanifest.xml', manifestXml);
+  return zip;
+}
+
+// ── Master Export Router ──────────────────────────────────────────────────────
+window.downloadZip = async function(quizType = 'classic') {
   try {
-      const {id,assessment,manifest}=window.buildQTI();
-      const zip = new window.JSZip();
-      zip.file('imsmanifest.xml',manifest); zip.file(id+'.xml',assessment);
-      const blob=await zip.generateAsync({type:'blob'});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a'); a.href=url; a.download=window.state.title+'.zip'; a.click();
-      window.state.step='done'; window.render();
+      let zip;
+      let suffix = '';
+      
+      if (quizType === 'new') {
+          zip = window.buildQTI_NewQuizzes();
+          suffix = '_NewQuizzes';
+      } else {
+          const {id,assessment,manifest} = window.buildQTI_Classic();
+          zip = new window.JSZip();
+          zip.file('imsmanifest.xml',manifest); zip.file(id+'.xml',assessment);
+          suffix = '_ClassicQuizzes';
+      }
+      
+      const blob = await zip.generateAsync({type:'blob'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = window.state.title + suffix + '.zip'; a.click();
+      
+      window.state.step = 'done'; window.render();
   } catch (err) {
       window.logError("ZIP Generation Failed: " + err.message);
   }
