@@ -408,7 +408,6 @@ window.changeQuestionType = function(i, newType) {
     const q = window.state.questions[i];
     window.markDirty(i);
     
-    // Cache the MC choices so we can revert back to them if needed
     if (newType === 'true_false_question') {
         if (!q._cachedChoices && q.choices && q.choices.length > 0) q._cachedChoices = JSON.parse(JSON.stringify(q.choices));
         q.choices = [
@@ -419,7 +418,6 @@ window.changeQuestionType = function(i, newType) {
         if (!q._cachedChoices && q.choices && q.choices.length > 0) q._cachedChoices = JSON.parse(JSON.stringify(q.choices));
         q.choices = [];
     } else {
-        // Returning to MC or MA, restore choices if we had them
         if (q._cachedChoices) {
             q.choices = JSON.parse(JSON.stringify(q._cachedChoices));
         } else if (!q.choices || q.choices.length === 0) {
@@ -452,7 +450,6 @@ window.handleEditToggle = function(i) {
         // Entering Form
         window.editMode[i] = true;
         window.isDirty[i] = false;
-        // Backup the exact state so Cancel works flawlessly
         q._backup = JSON.parse(JSON.stringify(q));
     }
     window.renderReview();
@@ -516,7 +513,7 @@ window.renderUpload = function() {
     ` : ''}
 
     <div style="display:flex;justify-content:flex-end;margin-top:20px;">
-      <button class="btn btn-primary" id="parse-btn" ${!window.state.rawText?'disabled':''}>Parse Questions \u2192</button>
+      <button class="btn btn-primary" id="parse-btn" ${!window.state.rawText?'disabled':''}>Create Preview \u2192</button>
     </div>
   `;
   
@@ -852,7 +849,7 @@ window.buildQTI_Classic = function() {
 // ── CLASSIC QUESTION BANK ENGINE (QTI 1.2 objectbank) ─────────────────────────
 window.buildQTI_Bank = function() {
   const id='assess_'+Date.now();
-  const metaStyle = window.state.metaStyle || 'visible';
+  const metaStyle = 'strip'; // Enforce strip for question banks
 
   const items=window.state.questions.map((q,i)=>{
     const rid='r'+i, pts=q.points||1, ch=q.choices||[], qtiType = q.type || 'multiple_choice_question';
@@ -862,14 +859,7 @@ window.buildQTI_Bank = function() {
     let feedbackXML = q.rationale ? `<itemfeedback ident="general_fb"><material><mattext texttype="text/html">&lt;p&gt;${window.esc(q.rationale)}&lt;/p&gt;</mattext></material></itemfeedback>` : '';
 
     let questionTextWithMeta = window.esc(q.text).replace(/\n/g, '&lt;br&gt;');
-    if (q.metadata && metaStyle !== 'strip') {
-        const tableHTML = window.buildCompliantHTMLTable(q.metadata);
-        if (metaStyle === 'hidden') {
-            questionTextWithMeta += `\n&lt;!-- EXAMSOFT METADATA: \n${window.esc(q.metadata)}\n--&gt;`;
-        } else if (metaStyle === 'visible') {
-            questionTextWithMeta += `&lt;br&gt;&lt;br&gt;&lt;strong&gt;Exam Metadata:&lt;/strong&gt;&lt;div style="background:#fafafa; padding:12px; border:1px solid #ccc; border-radius:6px; margin-top:8px;"&gt;${tableHTML}&lt;/div&gt;`;
-        }
-    }
+    // Removed conditional appending for metadata since metaStyle is 'strip'
 
     if (qtiType === 'essay_question' || qtiType === 'short_answer_question') {
       return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_str ident="${rid}" rcardinality="Single"><render_fib><response_label ident="ans" rshuffle="No"/></render_fib></response_str></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>${feedbackXML}</item>`;
