@@ -21,7 +21,7 @@
       --ok-bg:    #f0fdf4; --ok-tx:   #15803d; --ok-bd:   rgba(21,128,61,0.3);
       --warn-bg:  #fffbeb; --warn-tx: #b45309; --warn-bd: rgba(180,83,9,0.3);
       --err-bg:   #fef2f2; --err-tx:  #b91c1c; --err-bd:  rgba(185,28,28,0.3);
-      --green:    #10b981; --blue:     #3b82f6; --red:      #ef4444;
+      --green:    #10b981; --blue:     #3b82f6; --red:      #ef4444; --purple:   #8b5cf6;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -32,7 +32,7 @@
         --ok-bg:   #0a1f12; --ok-tx:  #6ee7a0; --ok-bd:  rgba(110,231,160,0.25);
         --warn-bg: #1a1200; --warn-tx: #fbbf24; --warn-bd:rgba(251,191,36,0.25);
         --err-bg:  #1f0a0a; --err-tx:  #fca5a5; --err-bd: rgba(252,165,165,0.25);
-        --green:   #22c55e; --blue:     #60a5fa; --red:      #f87171;
+        --green:   #22c55e; --blue:     #60a5fa; --red:      #f87171; --purple:   #a78bfa;
       }
     }
     body { font-family: 'DM Sans', sans-serif; background: var(--bg3); color: var(--text); min-height: 100vh; transition: background 0.3s; }
@@ -65,10 +65,10 @@
 
     .btn { border-radius: var(--radius); padding: 10px 22px; font-size: 14px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: opacity 0.15s; }
     .btn-primary { background: var(--text); color: var(--bg); border: none; font-weight: 500; }
-    .btn-primary:disabled { opacity: 0.3; cursor: default; }
+    .btn-primary:disabled, .btn-outline:disabled { opacity: 0.3; cursor: not-allowed; border-color: var(--border2) !important; color: var(--text2) !important; }
     .btn-secondary { background: transparent; border: 0.5px solid var(--border2); color: var(--text2); }
     .btn-outline { background: transparent; border: 1px solid var(--text); color: var(--text); }
-    .btn-outline:hover { background: var(--bg2); }
+    .btn-outline:hover:not(:disabled) { background: var(--bg2); }
     .btn-toggle { background: var(--bg); border: 1px solid var(--border2); color: var(--text); font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: background 0.15s; font-weight: 500; }
     .btn-toggle:hover { background: var(--bg2); }
 
@@ -132,12 +132,18 @@
 <div id="error-console">
     <div id="error-console-header">
         <span>Application Error Logs</span>
-        <button class="btn-secondary" style="border:none; padding:4px 8px; cursor:pointer;" onclick="document.getElementById('error-console').style.display='none'">Close</button>
+        <div>
+            <button class="btn-secondary" style="border:none; padding:4px 8px; cursor:pointer; background: var(--bg); color: var(--text); margin-right: 8px; border-radius: 4px;" onclick="window.emailLogs()">✉️ Email Support</button>
+            <button class="btn-secondary" style="border:none; padding:4px 8px; cursor:pointer;" onclick="document.getElementById('error-console').style.display='none'">Close</button>
+        </div>
     </div>
     <div id="error-console-body"></div>
 </div>
 
 <script>
+// ── Admin Support Settings ──────────────────────────────────────────────────────
+window.supportEmail = "YOUR_EMAIL@UNIVERSITY.EDU"; // <--- UPDATE THIS EMAIL!
+
 // ── Global Memory (Canvas iFrame Safe) ─────────────────────────────────────────
 window.state = { 
   step:'upload', file:null, rawText: null, questions:[], fixes:[], title:'ExamSoft Import', error:null, extracting:false,
@@ -173,6 +179,14 @@ const originalConsoleError = console.error;
 console.error = function(...args) {
     window.logError(`CONSOLE ERROR: ${args.join(' ')}`);
     originalConsoleError.apply(console, args);
+};
+
+window.emailLogs = function() {
+    const logText = window.appLogs.join('\n\n').slice(-2500); 
+    const subject = encodeURIComponent("ExamSoft Converter - Error Log");
+    const bodyText = `Please describe what you were doing when the error occurred: \n\n\n\n--- AUTO-GENERATED ERROR LOG ---\n${logText}`;
+    const body = encodeURIComponent(bodyText);
+    window.location.href = `mailto:${window.supportEmail}?subject=${subject}&body=${body}`;
 };
 
 // ── LTI Configuration URL Router ──────────────────────────────────────────────
@@ -390,18 +404,68 @@ window.markDirty = function(i) {
     }
 }
 
+window.changeQuestionType = function(i, newType) {
+    const q = window.state.questions[i];
+    window.markDirty(i);
+    
+    // Cache the MC choices so we can revert back to them if needed
+    if (newType === 'true_false_question') {
+        if (!q._cachedChoices && q.choices && q.choices.length > 0) q._cachedChoices = JSON.parse(JSON.stringify(q.choices));
+        q.choices = [
+            {id: 'A', text: 'True', isCorrect: true, originalIsCorrect: true},
+            {id: 'B', text: 'False', isCorrect: false, originalIsCorrect: false}
+        ];
+    } else if (newType === 'essay_question' || newType === 'short_answer_question') {
+        if (!q._cachedChoices && q.choices && q.choices.length > 0) q._cachedChoices = JSON.parse(JSON.stringify(q.choices));
+        q.choices = [];
+    } else {
+        // Returning to MC or MA, restore choices if we had them
+        if (q._cachedChoices) {
+            q.choices = JSON.parse(JSON.stringify(q._cachedChoices));
+        } else if (!q.choices || q.choices.length === 0) {
+            q.choices = [
+                {id: 'A', text: '', isCorrect: true, originalIsCorrect: true},
+                {id: 'B', text: '', isCorrect: false, originalIsCorrect: false},
+                {id: 'C', text: '', isCorrect: false, originalIsCorrect: false},
+                {id: 'D', text: '', isCorrect: false, originalIsCorrect: false}
+            ];
+        }
+    }
+    q.type = newType;
+    window.renderReview();
+}
+
 window.handleEditToggle = function(i) {
-    window.expanded[i] = true; // Always expand card when toggling mode
+    window.expanded[i] = true; 
+    const q = window.state.questions[i];
+    
     if (window.editMode[i]) {
-        // Leaving Edit Mode -> Going to Preview
+        // Saving Form -> Back to Preview
         window.editMode[i] = false;
-        if (window.isDirty[i]) { window.showToast("Changes saved."); }
+        if (window.isDirty[i]) { 
+            window.showToast("Changes saved."); 
+            delete q._backup; 
+            delete q._cachedChoices;
+        }
         window.isDirty[i] = false;
     } else {
-        // Leaving Preview -> Entering Edit Form
+        // Entering Form
         window.editMode[i] = true;
         window.isDirty[i] = false;
+        // Backup the exact state so Cancel works flawlessly
+        q._backup = JSON.parse(JSON.stringify(q));
     }
+    window.renderReview();
+}
+
+window.cancelEdit = function(i) {
+    const q = window.state.questions[i];
+    if (q._backup) {
+        window.state.questions[i] = JSON.parse(JSON.stringify(q._backup));
+    }
+    window.editMode[i] = false;
+    window.isDirty[i] = false;
+    window.showToast("Changes reverted.");
     window.renderReview();
 }
 
@@ -414,6 +478,15 @@ window.toggleChoice = function(qi, ci) {
   }
   window.markDirty(qi);
   window.renderReview();
+}
+
+window.checkUnsavedChanges = function() {
+    const dirtyQs = Object.keys(window.isDirty).filter(k => window.isDirty[k]);
+    if (dirtyQs.length > 0) {
+        alert(`You have unsaved changes on Question(s): ${dirtyQs.map(i => window.state.questions[i].id).join(', ')}.\n\nPlease click "Save" or "Cancel" on those questions before exporting.`);
+        return true;
+    }
+    return false;
 }
 
 window.renderSteps = function() {
@@ -443,7 +516,7 @@ window.renderUpload = function() {
     ` : ''}
 
     <div style="display:flex;justify-content:flex-end;margin-top:20px;">
-      <button class="btn btn-primary" id="parse-btn" ${!window.state.rawText?'disabled':''}>Create Test\u2192</button>
+      <button class="btn btn-primary" id="parse-btn" ${!window.state.rawText?'disabled':''}>Parse Questions \u2192</button>
     </div>
   `;
   
@@ -521,7 +594,7 @@ window.renderReview = function() {
       </div>
     </div>
 
-    ${qCount === 0 ? `<div class="alert-err" style="margin-bottom: 20px;"><strong>⚠️ No questions were detected!</strong></div>` : ''}
+    ${qCount === 0 ? `<div class="alert-err" style="margin-bottom: 20px;"><strong>⚠️ No questions were detected! Upload a valid file to proceed.</strong></div>` : ''}
 
     <div style="display:flex; justify-content:space-between; margin-bottom:16px; align-items: flex-end;">
         <div style="flex:1; max-width: 500px;">
@@ -558,8 +631,9 @@ window.renderReview = function() {
       <button class="btn btn-secondary" onclick="location.reload()">\u2190 Start Over</button>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn btn-outline" style="border-color:var(--red); color:var(--red);" id="pdf-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadPDF()">Download PDF Key</button>
+        <button class="btn btn-outline" style="border-color:var(--purple); color:var(--purple);" id="export-bank-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('bank')">Question Bank ZIP</button>
         <button class="btn btn-outline" style="border-color:var(--blue); color:var(--blue);" id="export-classic-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('classic')">Classic Quizzes ZIP</button>
-        <button class="btn btn-primary" style="background:var(--green); color:white;" id="export-new-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('new')">New Quizzes ZIP</button>
+        <button class="btn btn-primary" style="background:var(--green); color:white; border-color:var(--green);" id="export-new-btn" ${qCount === 0 ? 'disabled' : ''} onclick="window.downloadZip('new')">New Quizzes ZIP</button>
       </div>
     </div>
   `;
@@ -578,10 +652,16 @@ window.renderCard = function(q,i) {
   const exp = window.expanded[i]; 
   const isEdit = window.editMode[i];
   
-  // Logic for the button text
-  let btnText = "✏️ Edit";
+  let btnHtml = "";
   if (isEdit) {
-      btnText = window.isDirty[i] ? "💾 Save" : "✓ Done";
+      if (window.isDirty[i]) {
+          btnHtml = `<button id="btn-cancel-${i}" class="btn-toggle" style="margin-right: 6px; color: var(--red); border-color: var(--red);" onclick="event.stopPropagation(); window.cancelEdit(${i});">❌ Cancel</button>
+                     <button id="btn-edit-${i}" class="btn-toggle" style="color: var(--green); border-color: var(--green);" onclick="event.stopPropagation(); window.handleEditToggle(${i});">💾 Save</button>`;
+      } else {
+          btnHtml = `<button id="btn-edit-${i}" class="btn-toggle" onclick="event.stopPropagation(); window.handleEditToggle(${i});">✓ Done</button>`;
+      }
+  } else {
+      btnHtml = `<button id="btn-edit-${i}" class="btn-toggle" onclick="event.stopPropagation(); window.handleEditToggle(${i});">✏️ Edit</button>`;
   }
 
   const typeBadgeColor = q.type === 'multiple_answers_question' ? 'var(--info-bg)' : 'var(--bg2)';
@@ -594,7 +674,7 @@ window.renderCard = function(q,i) {
       <span style="background:${typeBadgeColor}; color:${typeBadgeText}; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold; font-family:'JetBrains Mono',monospace;">${typeLabels[q.type] || 'MC'}</span>
       ${metaBadge}
       <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:6px;"><strong>${window.esc(q.qTitle)}</strong></span>
-      <button id="btn-edit-${i}" class="btn-toggle" onclick="event.stopPropagation(); window.handleEditToggle(${i});">${btnText}</button>
+      ${btnHtml}
       <span style="margin-left:4px;">${exp?'▾':'▸'}</span>
     </div>
     ${exp?`<div class="q-body">
@@ -606,12 +686,16 @@ window.renderCard = function(q,i) {
             </div>
             <div style="font-size: 14px; color: var(--text); margin-bottom: 20px; line-height: 1.6;">${window.esc(q.text).replace(/\n/g, '<br>')}</div>
             <div style="margin-bottom: 24px;">
-                ${q.choices.map(c => `
+                ${q.choices && q.choices.length > 0 ? q.choices.map(c => `
                     <div style="display:flex; align-items:flex-start; gap: 10px; padding: 8px 12px; margin-bottom: 8px; background: ${c.isCorrect ? 'var(--ok-bg)' : 'var(--bg2)'}; border: 1px solid ${c.isCorrect ? 'var(--ok-bd)' : 'transparent'}; border-radius: 6px;">
                         <input type="${q.type === 'multiple_answers_question' ? 'checkbox' : 'radio'}" disabled ${c.isCorrect ? 'checked' : ''} style="margin-top: 3px;">
                         <span style="font-size: 14px; color: ${c.isCorrect ? 'var(--ok-tx)' : 'var(--text)'}; font-weight: ${c.isCorrect ? '600' : '400'};">${c.id}. ${window.esc(c.text)}</span>
                     </div>
-                `).join('')}
+                `).join('') : `
+                    <div style="background:var(--bg3); padding:16px; border:1px dashed var(--border2); border-radius:6px; color:var(--text2); font-style:italic; text-align:center;">
+                        [ Student Text Response Area ]
+                    </div>
+                `}
             </div>
             ${q.rationale ? `<div style="background: var(--info-bg); border-left: 4px solid var(--info-tx); padding: 12px; font-size: 13px; color: var(--text); margin-bottom: 16px;"><strong style="color: var(--info-tx); display:block; margin-bottom: 6px;">Canvas Rationale / Feedback:</strong>${window.esc(q.rationale).replace(/\n/g, '<br>')}</div>` : ''}
             ${q.metadata && window.state.metaStyle === 'visible' ? `
@@ -629,7 +713,7 @@ window.renderCard = function(q,i) {
           </div>
           <div style="flex:1;">
             <label class="lbl">Canvas Question Type</label>
-            <select onchange="window.markDirty(${i}); window.state.questions[${i}].type=this.value;">
+            <select onchange="window.changeQuestionType(${i}, this.value);">
               <option value="multiple_choice_question" ${q.type==='multiple_choice_question'?'selected':''}>Multiple Choice</option>
               <option value="multiple_answers_question" ${q.type==='multiple_answers_question'?'selected':''}>Multiple Answers (MA)</option>
               <option value="true_false_question" ${q.type==='true_false_question'?'selected':''}>True/False</option>
@@ -667,7 +751,12 @@ window.renderCard = function(q,i) {
                 ${statusLbl}
               </div>`;
           }).join('')}
-        </div>` : ''}
+        </div>` : `
+        <div style="margin-top:16px;">
+          <label class="lbl">Student Answer Area</label>
+          <textarea rows="4" disabled style="background:var(--bg3); cursor:not-allowed; resize:none;" placeholder="[ A large text box will appear here for the student to write their ${q.type === 'essay_question' ? 'essay' : 'short answer'} ]"></textarea>
+        </div>
+        `}
 
         ${q.rationale ? `<div style="margin-top:16px;"><label class="lbl">Rationale (Will export as Canvas Feedback)</label><textarea rows="2" spellcheck="true" oninput="window.markDirty(${i}); window.state.questions[${i}].rationale=this.value">${window.esc(q.rationale)}</textarea></div>` : ''}
         ${q.metadata ? `<div style="margin-top:16px;"><label class="lbl">Extracted ExamSoft Metadata</label><textarea rows="3" style="font-size:11px; font-family:'JetBrains Mono', monospace;" oninput="window.markDirty(${i}); window.state.questions[${i}].metadata=this.value">${window.esc(q.metadata)}</textarea></div>` : ''}
@@ -677,6 +766,8 @@ window.renderCard = function(q,i) {
 }
 
 window.downloadPDF = function() {
+  if (window.checkUnsavedChanges()) return;
+
   try {
       if (!window.jspdf) { throw new Error("jsPDF library not loaded."); }
       const { jsPDF } = window.jspdf; const doc = new jsPDF();
@@ -758,6 +849,53 @@ window.buildQTI_Classic = function() {
   return {id,assessment:a,manifest:m};
 }
 
+// ── CLASSIC QUESTION BANK ENGINE (QTI 1.2 objectbank) ─────────────────────────
+window.buildQTI_Bank = function() {
+  const id='assess_'+Date.now();
+  const metaStyle = window.state.metaStyle || 'visible';
+
+  const items=window.state.questions.map((q,i)=>{
+    const rid='r'+i, pts=q.points||1, ch=q.choices||[], qtiType = q.type || 'multiple_choice_question';
+    const safeTitle = window.esc(q.qTitle || `Question ${q.id}`);
+    const labels=ch.map((c,ci)=>`<response_label ident="c${i}_${ci}"><material><mattext texttype="text/html">&lt;p&gt;${window.esc(c.text)}&lt;/p&gt;</mattext></material></response_label>`).join('');
+    
+    let feedbackXML = q.rationale ? `<itemfeedback ident="general_fb"><material><mattext texttype="text/html">&lt;p&gt;${window.esc(q.rationale)}&lt;/p&gt;</mattext></material></itemfeedback>` : '';
+
+    let questionTextWithMeta = window.esc(q.text).replace(/\n/g, '&lt;br&gt;');
+    if (q.metadata && metaStyle !== 'strip') {
+        const tableHTML = window.buildCompliantHTMLTable(q.metadata);
+        if (metaStyle === 'hidden') {
+            questionTextWithMeta += `\n&lt;!-- EXAMSOFT METADATA: \n${window.esc(q.metadata)}\n--&gt;`;
+        } else if (metaStyle === 'visible') {
+            questionTextWithMeta += `&lt;br&gt;&lt;br&gt;&lt;strong&gt;Exam Metadata:&lt;/strong&gt;&lt;div style="background:#fafafa; padding:12px; border:1px solid #ccc; border-radius:6px; margin-top:8px;"&gt;${tableHTML}&lt;/div&gt;`;
+        }
+    }
+
+    if (qtiType === 'essay_question' || qtiType === 'short_answer_question') {
+      return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_str ident="${rid}" rcardinality="Single"><render_fib><response_label ident="ans" rshuffle="No"/></render_fib></response_str></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes></resprocessing>${feedbackXML}</item>`;
+    }
+
+    const correctIndices = []; ch.forEach((c, ci) => { if (c.isCorrect) correctIndices.push(ci); });
+    if(correctIndices.length === 0 && ch.length > 0) correctIndices.push(0);
+
+    let respCondition = "", rcardinality = "Single";
+    if (qtiType === 'multiple_answers_question') {
+        rcardinality = "Multiple";
+        const conds = correctIndices.map(ci => `<varequal respident="${rid}">c${i}_${ci}</varequal>`).join('');
+        respCondition = `<respcondition continue="No"><conditionvar><and>${conds}</and></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
+    } else {
+        const corrId = `c${i}_${correctIndices[0]}`;
+        respCondition = `<respcondition continue="No"><conditionvar><varequal respident="${rid}">${corrId}</varequal></conditionvar><setvar action="Set" varname="SCORE">100</setvar></respcondition>`;
+    }
+
+    return `<item ident="q${i}" title="${safeTitle}"><itemmetadata><qtimetadata><qtimetadatafield><fieldlabel>question_type</fieldlabel><fieldentry>${qtiType}</fieldentry></qtimetadatafield><qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${pts}</fieldentry></qtimetadatafield></qtimetadata></itemmetadata><presentation><material><mattext texttype="text/html">&lt;p&gt;${questionTextWithMeta}&lt;/p&gt;</mattext></material><response_lid ident="${rid}" rcardinality="${rcardinality}"><render_choice>${labels}</render_choice></response_lid></presentation><resprocessing><outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>${respCondition}</resprocessing>${feedbackXML}</item>`;
+  }).join('');
+  
+  const a=`<?xml version="1.0" encoding="UTF-8"?><questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/xsd/ims_qtiasiv1p2.xsd"><objectbank ident="${id}"><qtimetadata><qtimetadatafield><fieldlabel>bank_title</fieldlabel><fieldentry>${window.esc(window.state.title)}</fieldentry></qtimetadatafield></qtimetadata>${items}</objectbank></questestinterop>`;
+  const m=`<?xml version="1.0" encoding="UTF-8"?><manifest identifier="man_${Date.now()}" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"><metadata><schema>IMS Content</schema><schemaversion>1.1.3</schemaversion></metadata><organizations/><resources><resource identifier="res1" type="imsqti_xmlv1p2" href="${id}.xml"><file href="${id}.xml"/></resource></resources></manifest>`;
+  return {id,assessment:a,manifest:m};
+}
+
 // ── NEW QUIZZES ENGINE (QTI 2.1) ──────────────────────────────────────────────
 window.buildQTI_NewQuizzes = function() {
   const manifestId = 'man_' + Date.now();
@@ -835,6 +973,8 @@ window.buildQTI_NewQuizzes = function() {
 
 // ── Master Export Router ──────────────────────────────────────────────────────
 window.downloadZip = async function(quizType = 'classic') {
+  if (window.checkUnsavedChanges()) return;
+
   try {
       let zip;
       let suffix = '';
@@ -842,6 +982,11 @@ window.downloadZip = async function(quizType = 'classic') {
       if (quizType === 'new') {
           zip = window.buildQTI_NewQuizzes();
           suffix = '_NewQuizzes';
+      } else if (quizType === 'bank') {
+          const {id,assessment,manifest} = window.buildQTI_Bank();
+          zip = new window.JSZip();
+          zip.file('imsmanifest.xml',manifest); zip.file(id+'.xml',assessment);
+          suffix = '_QuestionBank';
       } else {
           const {id,assessment,manifest} = window.buildQTI_Classic();
           zip = new window.JSZip();
@@ -867,7 +1012,7 @@ window.renderDone = function() {
         <h2>Export Complete!</h2>
         <p style="margin-bottom: 20px; color: var(--text2);">Your QTI ZIP is ready for Canvas.</p>
         <div style="display:flex; justify-content:center; gap:10px;">
-          <button class="btn btn-outline" onclick="window.downloadPDF()">Download PDF Review Key</button>
+          <button class="btn btn-outline" style="border-color:var(--red); color:var(--red);" onclick="window.downloadPDF()">Download PDF Review Key</button>
           <button class="btn btn-primary" onclick="location.reload()">Convert Another Exam</button>
         </div>
       </div>
